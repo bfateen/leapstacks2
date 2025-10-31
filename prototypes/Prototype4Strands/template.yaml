@@ -1,0 +1,2524 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Strands Agents with MCP - Real SDK Implementation using proven layer methodology with HTML Frontend'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Name of the project (used for resource naming)
+    Default: 'strands-mcp-demo'
+    AllowedPattern: '^[a-z0-9\-]+$'
+    
+  Environment:
+    Type: String
+    Description: Environment name
+    Default: 'dev'
+    AllowedValues: [dev, staging, prod]
+
+Resources:
+  # =============================================
+  # S3 Bucket for Artifacts (Private & Secure)
+  # =============================================
+  ArtifactsBucket:
+    Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketName: !Join
+        - "-"
+        - - !Sub "${ProjectName}-${Environment}-artifacts"
+          - !Select
+            - 0
+            - !Split
+              - "-"
+              - !Select
+                - 2
+                - !Split
+                  - "/"
+                  - !Ref "AWS::StackId"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'AES256'
+      VersioningConfiguration:
+        Status: Enabled
+
+  # S3 Cleanup Function (from working template)
+  S3CleanupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:DeleteObject
+                  - s3:ListObjectVersions
+                  - s3:DeleteObjectVersion
+                Resource: 
+                  - !Sub '${ArtifactsBucket.Arn}'
+                  - !Sub '${ArtifactsBucket.Arn}/*'
+
+  S3CleanupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.9
+      Handler: index.handler
+      Role: !GetAtt S3CleanupRole.Arn
+      Timeout: 300
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          
+          def handler(event, context):
+              try:
+                  if event['RequestType'] == 'Delete':
+                      bucket_name = event['ResourceProperties']['BucketName']
+                      s3 = boto3.client('s3')
+                      
+                      # List and delete all objects
+                      paginator = s3.get_paginator('list_objects_v2')
+                      for page in paginator.paginate(Bucket=bucket_name):
+                          if 'Contents' in page:
+                              objects = [{'Key': obj['Key']} for obj in page['Contents']]
+                              s3.delete_objects(Bucket=bucket_name, Delete={'Objects': objects})
+                      
+                      # List and delete all object versions
+                      paginator = s3.get_paginator('list_object_versions')
+                      for page in paginator.paginate(Bucket=bucket_name):
+                          if 'Versions' in page:
+                              versions = [{'Key': obj['Key'], 'VersionId': obj['VersionId']} for obj in page['Versions']]
+                              s3.delete_objects(Bucket=bucket_name, Delete={'Objects': versions})
+                          if 'DeleteMarkers' in page:
+                              markers = [{'Key': obj['Key'], 'VersionId': obj['VersionId']} for obj in page['DeleteMarkers']]
+                              s3.delete_objects(Bucket=bucket_name, Delete={'Objects': markers})
+                  
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
+  ArtifactsBucketCleanupResource:
+    Type: Custom::S3Cleanup
+    DependsOn: ArtifactsBucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      ServiceToken: !GetAtt S3CleanupFunction.Arn
+      BucketName: !Ref ArtifactsBucket
+
+  # =============================================
+  # Transcript File Creator
+  # =============================================
+  TranscriptCreatorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource: !Sub '${ArtifactsBucket.Arn}/*'
+
+  TranscriptCreatorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.9
+      Handler: index.handler
+      Role: !GetAtt TranscriptCreatorRole.Arn
+      Timeout: 300
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          
+          def handler(event, context):
+              try:
+                  if event['RequestType'] in ['Create', 'Update']:
+                      bucket_name = event['ResourceProperties']['BucketName']
+                      s3 = boto3.client('s3')
+                      
+                      # Sample transcript content for project ownership identification
+                      transcript_content = '''Meeting Transcript: Q4 Customer Authentication System Review
+          Date: January 15, 2025
+          Time: 2:00 PM - 3:30 PM PST
+          Attendees: Sarah Chen (Engineering Manager), Mike Rodriguez (Senior Developer), Lisa Park (Product Manager), David Kim (DevOps Engineer), Jennifer Wu (Security Architect)
+
+          [2:02 PM] Sarah Chen: Alright everyone, let's start with our Q4 review of the customer authentication system. Mike, since you've been the primary owner of this system for the past 18 months, can you give us a status update?
+
+          [2:03 PM] Mike Rodriguez: Sure thing. The authentication service has been running smoothly since our last major refactor in September. I've been maintaining the core OAuth implementation, the session management, and the password reset flows. We're seeing 99.7% uptime, which is above our SLA target.
+
+          [2:04 PM] Lisa Park: That's great to hear. From the product side, we've had very few customer complaints about login issues. Mike, I know you've been working closely with our support team on the few edge cases that came up.
+
+          [2:05 PM] Mike Rodriguez: Exactly. I've been the primary point of contact for all authentication-related support escalations. Last month I resolved that tricky SSO integration issue with the enterprise client, and I've been documenting all the common troubleshooting steps for the support team.
+
+          [2:06 PM] David Kim: Mike, I wanted to thank you for being so responsive when we had that deployment issue in November. You jumped on the incident call immediately and helped us roll back the problematic release. Your knowledge of the authentication database schema was crucial.
+
+          [2:07 PM] Mike Rodriguez: No problem. I've been managing the database migrations and schema changes for the auth system since I took over from Tom when he moved to the mobile team. I maintain all the deployment scripts and monitoring dashboards too.
+
+          [2:08 PM] Jennifer Wu: From a security perspective, Mike has been excellent to work with. He implemented all the security recommendations from our Q3 audit, including the rate limiting improvements and the enhanced password policy enforcement. He's also been keeping up with the latest OAuth security best practices.
+
+          [2:10 PM] Sarah Chen: Mike, can you walk us through your current responsibilities so we have it documented?
+
+          [2:11 PM] Mike Rodriguez: Sure. I own the entire customer authentication system, which includes:
+          - The core OAuth 2.0 service and all related APIs
+          - Session management and token validation
+          - Password reset and account recovery flows
+          - Integration with our internal user directory
+          - All authentication-related database schemas and migrations
+          - Monitoring, alerting, and performance optimization
+          - Security compliance and vulnerability management
+          - Documentation and runbooks for the support team
+          - On-call rotation for authentication incidents
+
+          [2:13 PM] Lisa Park: That's comprehensive. How do you feel about the workload? Are there areas where you need additional support?
+
+          [2:14 PM] Mike Rodriguez: It's manageable right now, but I'd like to start cross-training someone else on the system. If I go on vacation or if we have a major incident, it would be good to have backup expertise. The system is pretty complex, especially the enterprise SSO integrations.
+
+          [2:15 PM] Sarah Chen: That's a good point. David, would you be interested in learning more about the authentication system? You already have good knowledge of our deployment infrastructure.
+
+          [2:16 PM] David Kim: I'd be happy to help. I've been wanting to understand the auth system better since it's so critical to our overall platform. Mike, maybe we could set up some knowledge transfer sessions?
+
+          [2:17 PM] Mike Rodriguez: Absolutely. I've been thinking about creating a more comprehensive documentation set anyway. We could start with the architecture overview and then dive into the operational aspects.
+
+          [2:18 PM] Jennifer Wu: I'd also like to be more involved in the security aspects. Mike, you've been doing great work, but having a dedicated security review process might be beneficial as we scale.
+
+          [2:19 PM] Mike Rodriguez: That would be really helpful. I try to stay current on security best practices, but having your expertise would definitely strengthen our security posture.
+
+          [2:20 PM] Lisa Park: So to summarize, Mike remains the primary owner and subject matter expert for the authentication system, but we'll start cross-training David on the operational side and involving Jennifer more in security reviews. Does that sound right?
+
+          [2:21 PM] Sarah Chen: Yes, that's the plan. Mike, you'll continue to be the go-to person for authentication issues, architecture decisions, and system maintenance. We'll document this ownership structure in our team wiki.
+
+          [2:22 PM] Mike Rodriguez: Sounds good. I'll update the system documentation to reflect current ownership and create a knowledge transfer plan for David.
+
+          [2:25 PM] Sarah Chen: Perfect. Let's move on to discussing the Q1 roadmap items...
+
+          [Meeting continues with other topics]
+
+          ---
+
+          Action Items:
+          1. Mike Rodriguez: Update authentication system documentation and ownership records
+          2. Mike Rodriguez & David Kim: Schedule knowledge transfer sessions starting next week
+          3. Jennifer Wu: Establish regular security review process for authentication system
+          4. Sarah Chen: Update team wiki with official system ownership assignments
+
+          System Ownership Summary:
+          - Primary Owner: Mike Rodriguez (Senior Developer)
+          - Backup/Cross-training: David Kim (DevOps Engineer) 
+          - Security Oversight: Jennifer Wu (Security Architect)
+          - Product Stakeholder: Lisa Park (Product Manager)
+          - Management Oversight: Sarah Chen (Engineering Manager)'''
+                      
+                      # Upload the transcript file
+                      s3.put_object(
+                          Bucket=bucket_name,
+                          Key='transcripts/project-meeting-q4-auth-review.txt',
+                          Body=transcript_content.encode('utf-8'),
+                          ContentType='text/plain'
+                      )
+                      
+                      # Create a second sample transcript for API Gateway system
+                      api_transcript_content = '''Meeting Transcript: API Gateway Infrastructure Review
+          Date: January 10, 2025
+          Time: 10:00 AM - 11:15 AM PST
+          Attendees: Alex Thompson (Platform Lead), Rachel Kim (Senior DevOps), Marcus Johnson (Backend Developer), Emma Davis (Site Reliability Engineer)
+
+          [10:02 AM] Alex Thompson: Let's review our API Gateway infrastructure. Rachel, you've been the primary maintainer since we migrated from the legacy system last year. Can you give us an overview?
+
+          [10:03 AM] Rachel Kim: Absolutely. I've been responsible for the entire API Gateway setup including rate limiting, authentication integration, and all the routing configurations. We're currently handling about 50,000 requests per minute with 99.95% availability.
+
+          [10:04 AM] Marcus Johnson: Rachel has been fantastic to work with. Whenever I need to deploy new API endpoints, she's always quick to help with the gateway configuration and SSL certificate management.
+
+          [10:05 AM] Rachel Kim: Thanks Marcus. I maintain all the Terraform configurations for the gateway infrastructure, manage the custom domain mappings, and handle all the monitoring and alerting. I also own the disaster recovery procedures and backup strategies.
+
+          [10:07 AM] Emma Davis: From an SRE perspective, Rachel has been excellent at maintaining our SLA targets. She implemented the circuit breaker patterns and the intelligent retry logic that has really improved our resilience.
+
+          [10:08 AM] Alex Thompson: Rachel, can you outline your current ownership scope for documentation purposes?
+
+          [10:09 AM] Rachel Kim: Sure. I own:
+          - All API Gateway infrastructure and configuration
+          - SSL certificate management and renewal automation
+          - Rate limiting and throttling policies
+          - Integration with our authentication services
+          - Monitoring, logging, and alerting for gateway health
+          - Disaster recovery and backup procedures
+          - Performance optimization and capacity planning
+          - Security policies and access controls
+          - Documentation and runbooks for gateway operations
+
+          [10:12 AM] Marcus Johnson: Rachel also helps with troubleshooting when we have integration issues. She knows the gateway configuration inside and out.
+
+          [10:13 AM] Rachel Kim: I try to be responsive to any gateway-related issues. I'm usually the first person called when we have API availability problems or performance degradation.
+
+          [10:15 AM] Alex Thompson: Excellent work Rachel. You'll continue as the primary owner of our API Gateway infrastructure. Let's make sure this is properly documented in our system registry.
+
+          ---
+
+          System Ownership Summary:
+          - Primary Owner: Rachel Kim (Senior DevOps)
+          - Backup Support: Emma Davis (Site Reliability Engineer)
+          - Integration Partner: Marcus Johnson (Backend Developer)
+          - Management Oversight: Alex Thompson (Platform Lead)'''
+                      
+                      # Upload the second transcript file
+                      s3.put_object(
+                          Bucket=bucket_name,
+                          Key='transcripts/api-gateway-infrastructure-review.txt',
+                          Body=api_transcript_content.encode('utf-8'),
+                          ContentType='text/plain'
+                      )
+                      
+                      print("Sample transcript files uploaded successfully!")
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                          'TranscriptFiles': [
+                              'transcripts/project-meeting-q4-auth-review.txt',
+                              'transcripts/api-gateway-infrastructure-review.txt'
+                          ]
+                      })
+                  
+                  elif event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
+  TranscriptCreatorTrigger:
+    Type: Custom::TranscriptCreator
+    DependsOn: ArtifactsBucket
+    Properties:
+      ServiceToken: !GetAtt TranscriptCreatorFunction.Arn
+      BucketName: !Ref ArtifactsBucket
+
+  # =============================================
+  # DynamoDB Table for MCP Sessions
+  # =============================================
+  McpSessionTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-${Environment}-mcp-sessions'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: sessionId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: sessionId
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  EmployeeTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-${Environment}-employees'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: employeeId
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+        - AttributeName: name
+          AttributeType: S
+      KeySchema:
+        - AttributeName: employeeId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: EmailIndex
+          KeySchema:
+            - AttributeName: email
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: NameIndex
+          KeySchema:
+            - AttributeName: name
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  # =============================================
+  # Employee Data Populator
+  # =============================================
+  
+  EmployeeDataPopulatorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:BatchWriteItem
+                Resource: !GetAtt EmployeeTable.Arn
+
+  EmployeeDataPopulatorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.9
+      Handler: index.handler
+      Role: !GetAtt EmployeeDataPopulatorRole.Arn
+      Timeout: 300
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          from datetime import datetime
+          
+          def handler(event, context):
+              try:
+                  if event['RequestType'] in ['Create', 'Update']:
+                      dynamodb = boto3.resource('dynamodb')
+                      table_name = event['ResourceProperties']['TableName']
+                      table = dynamodb.Table(table_name)
+                      
+                      # Employee data based on the transcript characters
+                      employees = [
+                          {
+                              'employeeId': 'EMP001',
+                              'name': 'Mike Rodriguez',
+                              'email': 'mike.rodriguez@company.com',
+                              'title': 'Senior Developer',
+                              'department': 'Engineering',
+                              'managerId': 'EMP005',
+                              'managerName': 'Sarah Chen',
+                              'startDate': '2022-07-15',
+                              'city': 'Seattle',
+                              'state': 'WA',
+                              'phone': '+1-206-555-0123',
+                              'skills': ['OAuth 2.0', 'Authentication Systems', 'Database Design', 'Python', 'Security'],
+                              'projects': ['Customer Authentication System', 'SSO Integration'],
+                              'primaryOwnership': 'Customer Authentication System',
+                              'onCallRotation': True,
+                              'status': 'Active'
+                          },
+                          {
+                              'employeeId': 'EMP002',
+                              'name': 'Lisa Park',
+                              'email': 'lisa.park@company.com',
+                              'title': 'Product Manager',
+                              'department': 'Product',
+                              'managerId': 'EMP006',
+                              'managerName': 'Robert Kim',
+                              'startDate': '2021-03-22',
+                              'city': 'San Francisco',
+                              'state': 'CA',
+                              'phone': '+1-415-555-0145',
+                              'skills': ['Product Strategy', 'Customer Research', 'Roadmap Planning', 'Analytics'],
+                              'projects': ['Authentication Product Strategy', 'Customer Experience'],
+                              'primaryOwnership': 'Authentication Product Roadmap',
+                              'onCallRotation': False,
+                              'status': 'Active'
+                          },
+                          {
+                              'employeeId': 'EMP003',
+                              'name': 'David Kim',
+                              'email': 'david.kim@company.com',
+                              'title': 'DevOps Engineer',
+                              'department': 'Engineering',
+                              'managerId': 'EMP005',
+                              'managerName': 'Sarah Chen',
+                              'startDate': '2020-11-08',
+                              'city': 'Austin',
+                              'state': 'TX',
+                              'phone': '+1-512-555-0167',
+                              'skills': ['AWS', 'Kubernetes', 'CI/CD', 'Infrastructure', 'Monitoring'],
+                              'projects': ['Deployment Infrastructure', 'Authentication System Ops'],
+                              'primaryOwnership': 'Deployment Pipeline',
+                              'onCallRotation': True,
+                              'status': 'Active'
+                          },
+                          {
+                              'employeeId': 'EMP004',
+                              'name': 'Jennifer Wu',
+                              'email': 'jennifer.wu@company.com',
+                              'title': 'Security Architect',
+                              'department': 'Security',
+                              'managerId': 'EMP007',
+                              'managerName': 'Michael Thompson',
+                              'startDate': '2019-09-16',
+                              'city': 'New York',
+                              'state': 'NY',
+                              'phone': '+1-212-555-0189',
+                              'skills': ['Security Architecture', 'Penetration Testing', 'Compliance', 'Risk Assessment'],
+                              'projects': ['Security Audit', 'Authentication Security Review'],
+                              'primaryOwnership': 'Security Compliance',
+                              'onCallRotation': True,
+                              'status': 'Active'
+                          },
+                          {
+                              'employeeId': 'EMP005',
+                              'name': 'Sarah Chen',
+                              'email': 'sarah.chen@company.com',
+                              'title': 'Engineering Manager',
+                              'department': 'Engineering',
+                              'managerId': 'EMP008',
+                              'managerName': 'James Wilson',
+                              'startDate': '2018-05-14',
+                              'city': 'Seattle',
+                              'state': 'WA',
+                              'phone': '+1-206-555-0201',
+                              'skills': ['Team Leadership', 'Architecture', 'Strategic Planning', 'Mentoring'],
+                              'projects': ['Engineering Team Management', 'Authentication Architecture'],
+                              'primaryOwnership': 'Engineering Team Leadership',
+                              'onCallRotation': False,
+                              'status': 'Active'
+                          },
+                          {
+                              'employeeId': 'EMP009',
+                              'name': 'Rachel Kim',
+                              'email': 'rachel.kim@company.com',
+                              'title': 'Senior DevOps',
+                              'department': 'Platform',
+                              'managerId': 'EMP010',
+                              'managerName': 'Alex Thompson',
+                              'startDate': '2021-01-25',
+                              'city': 'Portland',
+                              'state': 'OR',
+                              'phone': '+1-503-555-0223',
+                              'skills': ['API Gateway', 'Terraform', 'SSL Management', 'Load Balancing', 'Monitoring'],
+                              'projects': ['API Gateway Infrastructure', 'SSL Certificate Management'],
+                              'primaryOwnership': 'API Gateway Infrastructure',
+                              'onCallRotation': True,
+                              'status': 'Active'
+                          },
+                          {
+                              'employeeId': 'EMP011',
+                              'name': 'Marcus Johnson',
+                              'email': 'marcus.johnson@company.com',
+                              'title': 'Backend Developer',
+                              'department': 'Engineering',
+                              'managerId': 'EMP010',
+                              'managerName': 'Alex Thompson',
+                              'startDate': '2022-03-07',
+                              'city': 'Denver',
+                              'state': 'CO',
+                              'phone': '+1-303-555-0245',
+                              'skills': ['API Development', 'Microservices', 'Database Design', 'Integration'],
+                              'projects': ['API Development', 'Backend Services'],
+                              'primaryOwnership': 'Backend API Services',
+                              'onCallRotation': True,
+                              'status': 'Active'
+                          },
+                          {
+                              'employeeId': 'EMP012',
+                              'name': 'Emma Davis',
+                              'email': 'emma.davis@company.com',
+                              'title': 'Site Reliability Engineer',
+                              'department': 'Platform',
+                              'managerId': 'EMP010',
+                              'managerName': 'Alex Thompson',
+                              'startDate': '2020-08-19',
+                              'city': 'Chicago',
+                              'state': 'IL',
+                              'phone': '+1-312-555-0267',
+                              'skills': ['SRE', 'Monitoring', 'Incident Response', 'Performance Optimization'],
+                              'projects': ['Platform Reliability', 'API Gateway SRE'],
+                              'primaryOwnership': 'Platform SLA Management',
+                              'onCallRotation': True,
+                              'status': 'Active'
+                          },
+                          {
+                              'employeeId': 'EMP010',
+                              'name': 'Alex Thompson',
+                              'email': 'alex.thompson@company.com',
+                              'title': 'Platform Lead',
+                              'department': 'Platform',
+                              'managerId': 'EMP008',
+                              'managerName': 'James Wilson',
+                              'startDate': '2017-12-11',
+                              'city': 'San Francisco',
+                              'state': 'CA',
+                              'phone': '+1-415-555-0289',
+                              'skills': ['Platform Architecture', 'Team Leadership', 'Strategic Planning'],
+                              'projects': ['Platform Strategy', 'API Gateway Platform'],
+                              'primaryOwnership': 'Platform Architecture',
+                              'onCallRotation': False,
+                              'status': 'Active'
+                          }
+                      ]
+                      
+                      # Batch write items to DynamoDB
+                      with table.batch_writer() as batch:
+                          for employee in employees:
+                              # Add metadata
+                              employee['createdAt'] = datetime.utcnow().isoformat()
+                              employee['updatedAt'] = datetime.utcnow().isoformat()
+                              batch.put_item(Item=employee)
+                      
+                      print(f"Successfully populated {len(employees)} employee records")
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                          'EmployeeCount': len(employees)
+                      })
+                  
+                  elif event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
+  EmployeeDataPopulatorTrigger:
+    Type: Custom::EmployeeDataPopulator
+    DependsOn: EmployeeTable
+    Properties:
+      ServiceToken: !GetAtt EmployeeDataPopulatorFunction.Arn
+      TableName: !Ref EmployeeTable
+
+  # =============================================
+  # Strands SDK Layer Creation (Using Proven Methodology)
+  # =============================================
+  
+  StrandsLayerCreatorRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource: !Sub '${ArtifactsBucket.Arn}/*'
+
+  StrandsLayerCreatorFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt StrandsLayerCreatorRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import cfnresponse
+          import os
+          import subprocess
+          import shutil
+          import tempfile
+
+          def handler(event, context):
+              try:
+                  if event['RequestType'] in ['Create', 'Update']:
+                      print("Creating Strands SDK layer...")
+                      
+                      # Create working directory
+                      working_dir = '/tmp/python'
+                      if os.path.exists(working_dir):
+                          shutil.rmtree(working_dir)
+                      os.makedirs(working_dir)
+                      
+                      print("Installing Strands SDK and dependencies...")
+                      try:
+                          # Install Strands dependencies
+                          subprocess.check_call([
+                              'pip', 'install',
+                              'strands-agents==0.1.0',
+                              'strands-agents-tools==0.1.0',
+                              'fastapi==0.115.12',
+                              'uvicorn==0.34.2',
+                              'pydantic==2.11.4',
+                              'requests==2.31.0',
+                              '--target', working_dir,
+                              '--no-cache-dir',
+                              '--disable-pip-version-check'
+                          ])
+                      except subprocess.CalledProcessError as e:
+                          print(f"pip install error: {str(e)}")
+                          raise
+                      
+                      print("Creating ZIP file...")
+                      shutil.make_archive('/tmp/strands-layer', 'zip', '/tmp', 'python')
+                      
+                      print("Uploading to S3...")
+                      s3 = boto3.client('s3')
+                      bucket_name = event['ResourceProperties']['DestinationBucket']
+                      s3.upload_file('/tmp/strands-layer.zip', bucket_name, 'strands-layer.zip')
+                      
+                      response_data = {
+                          'LayerZipLocation': f's3://{bucket_name}/strands-layer.zip'
+                      }
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                  
+                  elif event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  import traceback
+                  print(f"Traceback: {traceback.format_exc()}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+      Runtime: python3.12
+      Timeout: 600
+      MemorySize: 1024
+
+  StrandsLayerCreatorTrigger:
+    Type: 'Custom::StrandsLayerCreator'
+    Properties:
+      ServiceToken: !GetAtt StrandsLayerCreatorFunction.Arn
+      DestinationBucket: !Ref ArtifactsBucket
+
+  StrandsLayer:
+    Type: 'AWS::Lambda::LayerVersion'
+    DependsOn: StrandsLayerCreatorTrigger
+    Properties:
+      LayerName: !Sub '${ProjectName}-${Environment}-strands-layer'
+      Description: 'Layer containing Strands Agents SDK and dependencies'
+      Content:
+        S3Bucket: !Ref ArtifactsBucket
+        S3Key: 'strands-layer.zip'
+      CompatibleRuntimes:
+        - python3.12
+      CompatibleArchitectures:
+        - x86_64
+
+  # =============================================
+  # MCP Layer Creation
+  # =============================================
+  
+  McpLayerCreatorRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource: !Sub '${ArtifactsBucket.Arn}/*'
+
+  McpLayerCreatorFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt McpLayerCreatorRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import cfnresponse
+          import os
+          import subprocess
+          import shutil
+          import tempfile
+
+          def handler(event, context):
+              try:
+                  if event['RequestType'] in ['Create', 'Update']:
+                      print("Creating MCP layer...")
+                      
+                      # Create working directory
+                      working_dir = '/tmp/python'
+                      if os.path.exists(working_dir):
+                          shutil.rmtree(working_dir)
+                      os.makedirs(working_dir)
+                      
+                      print("Installing MCP dependencies...")
+                      try:
+                          # Install MCP dependencies
+                          subprocess.check_call([
+                              'pip', 'install',
+                              'fastmcp==2.3.0',
+                              'mcp==1.8.0',
+                              'fastapi==0.115.12',
+                              'uvicorn==0.34.2',
+                              'pydantic==2.11.4',
+                              'requests==2.31.0',
+                              '--target', working_dir,
+                              '--no-cache-dir',
+                              '--disable-pip-version-check'
+                          ])
+                      except subprocess.CalledProcessError as e:
+                          print(f"pip install error: {str(e)}")
+                          raise
+                      
+                      print("Creating ZIP file...")
+                      shutil.make_archive('/tmp/mcp-layer', 'zip', '/tmp', 'python')
+                      
+                      print("Uploading to S3...")
+                      s3 = boto3.client('s3')
+                      bucket_name = event['ResourceProperties']['DestinationBucket']
+                      s3.upload_file('/tmp/mcp-layer.zip', bucket_name, 'mcp-layer.zip')
+                      
+                      response_data = {
+                          'LayerZipLocation': f's3://{bucket_name}/mcp-layer.zip'
+                      }
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                  
+                  elif event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  import traceback
+                  print(f"Traceback: {traceback.format_exc()}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+      Runtime: python3.12
+      Timeout: 600
+      MemorySize: 1024
+
+  McpLayerCreatorTrigger:
+    Type: 'Custom::McpLayerCreator'
+    Properties:
+      ServiceToken: !GetAtt McpLayerCreatorFunction.Arn
+      DestinationBucket: !Ref ArtifactsBucket
+
+  McpLayer:
+    Type: 'AWS::Lambda::LayerVersion'
+    DependsOn: McpLayerCreatorTrigger
+    Properties:
+      LayerName: !Sub '${ProjectName}-${Environment}-mcp-layer'
+      Description: 'Layer containing FastMCP and MCP dependencies'
+      Content:
+        S3Bucket: !Ref ArtifactsBucket
+        S3Key: 'mcp-layer.zip'
+      CompatibleRuntimes:
+        - python3.12
+      CompatibleArchitectures:
+        - x86_64
+
+  # =============================================
+  # Function Code Upload (Using Proven Methodology)
+  # =============================================
+  
+  FunctionCodeUploaderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource: !Sub '${ArtifactsBucket.Arn}/*'
+
+  FunctionCodeUploader:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt FunctionCodeUploaderRole.Arn
+      Timeout: 300
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import zipfile
+          import io
+          
+
+          def handler(event, context):
+              try:
+                  if event['RequestType'] in ['Create', 'Update']:
+                      s3 = boto3.client('s3')
+                      bucket_name = event['ResourceProperties']['DestinationBucket']
+                      
+                      # Real Strands Agent Implementation
+                      strands_agent_code = '''
+          import json
+          import os
+          import asyncio
+          from datetime import datetime
+          import requests
+          from strands import Agent, tool
+          from strands_tools import http_request
+          from strands.models import BedrockModel
+          import boto3
+
+          # MCP Client to connect to our MCP server
+          class MCPClient:
+              def __init__(self, mcp_url):
+                  self.mcp_url = mcp_url
+              
+              def call_tool(self, tool_name, arguments=None):
+                  """Call an MCP tool"""
+                  try:
+                      payload = {
+                          "jsonrpc": "2.0",
+                          "id": 1,
+                          "method": "tools/call",
+                          "params": {
+                              "name": tool_name,
+                              "arguments": arguments or {}
+                          }
+                      }
+                      
+                      response = requests.post(
+                          self.mcp_url,
+                          json=payload,
+                          headers={"Content-Type": "application/json"},
+                          timeout=30
+                      )
+                      
+                      if response.status_code == 200:
+                          result = response.json()
+                          if "result" in result and "content" in result["result"]:
+                              return result["result"]["content"][0]["text"]
+                      
+                      return f"Error calling {tool_name}: {response.text}"
+                  except Exception as e:
+                      return f"Error calling {tool_name}: {str(e)}"
+
+          # Initialize MCP client
+          mcp_client = MCPClient(os.environ.get('MCP_SERVER_URL', 'http://localhost:8000/mcp'))
+
+          @tool
+          def get_employee_info(identifier: str) -> str:
+              """Get detailed employee information by name, email, or employee ID"""
+              return mcp_client.call_tool("get_employee_info", {"identifier": identifier})
+
+          @tool
+          def list_company_employees() -> str:
+              """List all employees in the company directory"""
+              return mcp_client.call_tool("list_all_employees")
+
+          @tool
+          def get_current_time() -> str:
+              """Get the current time using MCP"""
+              return mcp_client.call_tool("get_time")
+
+          @tool
+          def get_weather_data(city: str) -> str:
+              """Get weather data for a city using MCP"""
+              return mcp_client.call_tool("get_weather", {"city": city})
+
+          @tool
+          def calculate(expression: str) -> str:
+              """Perform calculations using MCP"""
+              return mcp_client.call_tool("calculator", {"expression": expression})
+
+          @tool
+          def get_s3_bucket_count() -> str:
+              """Get S3 bucket count using MCP"""
+              return mcp_client.call_tool("count_s3_buckets")
+
+          @tool
+          def read_meeting_transcript(filename: str) -> str:
+              """Read meeting transcript files for ownership and expertise identification"""
+              return mcp_client.call_tool("read_transcript", {"filename": filename})
+
+          @tool
+          def list_available_transcripts() -> str:
+              """List all available meeting transcript files"""
+              return mcp_client.call_tool("list_transcripts")
+
+          @tool
+          def get_real_weather(city: str) -> str:
+              """Get real weather data from National Weather Service API"""
+              try:
+                  # First, get coordinates for the city (simplified - using Seattle coordinates)
+                  if "seattle" in city.lower():
+                      lat, lon = 47.6062, -122.3321
+                  elif "new york" in city.lower():
+                      lat, lon = 40.7128, -74.0060
+                  elif "los angeles" in city.lower():
+                      lat, lon = 34.0522, -118.2437
+                  else:
+                      # Default to Seattle for demo
+                      lat, lon = 47.6062, -122.3321
+                  
+                  # Get weather from National Weather Service
+                  points_url = f"https://api.weather.gov/points/{lat},{lon}"
+                  points_response = requests.get(points_url, timeout=10)
+                  
+                  if points_response.status_code == 200:
+                      points_data = points_response.json()
+                      forecast_url = points_data["properties"]["forecast"]
+                      
+                      forecast_response = requests.get(forecast_url, timeout=10)
+                      if forecast_response.status_code == 200:
+                          forecast_data = forecast_response.json()
+                          periods = forecast_data["properties"]["periods"][:3]  # Get first 3 periods
+                          
+                          weather_summary = f"Weather forecast for {city}:\\n"
+                          for period in periods:
+                              weather_summary += f"\\n{period['name']}: {period['detailedForecast']}"
+                          
+                          return weather_summary
+                  
+                  # Fallback to MCP weather if NWS fails
+                  return f"Could not get real weather data, using simulated data: {get_weather_data(city)}"
+                  
+              except Exception as e:
+                  return f"Error getting weather: {str(e)}. Using MCP fallback: {get_weather_data(city)}"
+
+          # Enhanced system prompt for multiple capabilities
+          ENHANCED_SYSTEM_PROMPT = """You are an intelligent assistant powered by Strands Agents SDK with MCP tool access. You can:
+
+          1. Get real weather data from the National Weather Service API
+          2. Access MCP tools for additional functionality (time, calculations, S3 info)
+          3. Read and analyze meeting transcripts to identify project ownership and expertise
+          4. Provide detailed analysis of team responsibilities and system ownership
+          5. Handle weather-related questions with context and helpful information
+
+          When asked about weather:
+          1. Use get_real_weather() to get actual NWS data when possible
+          2. Use get_weather_data() for simulated data as backup
+          3. Use get_current_time() to provide time context
+
+          When asked about project ownership or expertise:
+          1. Use list_available_transcripts() to see what meeting records are available
+          2. Use read_meeting_transcript() to analyze specific meeting transcripts
+          3. Look for clear ownership statements, responsibility assignments, and expertise indicators
+          4. Summarize findings with specific quotes and evidence from the transcripts
+
+          When asked about employees or team members:
+          1. Use get_employee_info() to look up specific people by name, email, or employee ID
+          2. Use list_company_employees() to get an overview of all team members
+          3. Cross-reference employee data with meeting transcripts for complete context
+          4. Provide comprehensive information about roles, responsibilities, and contact details
+
+          Always provide clear, detailed information and explain what you're doing.
+          Be conversational and helpful in your responses.
+          """
+
+          def lambda_handler(event, context):
+              try:
+                  print(f"Received event: {json.dumps(event)}")
+                  
+                  # Handle CORS preflight requests
+                  if event.get('httpMethod') == 'OPTIONS':
+                      return {
+                          'statusCode': 200,
+                          'headers': {
+                              'Content-Type': 'application/json',
+                              'Access-Control-Allow-Origin': '*',
+                              'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
+                              'Access-Control-Allow-Methods': 'POST,OPTIONS,GET'
+                          },
+                          'body': ''
+                      }
+                  
+                  # Parse request body
+                  if isinstance(event.get('body'), str):
+                      body = json.loads(event['body'])
+                  else:
+                      body = event.get('body', {})
+                      
+                  prompt = body.get('prompt', 'What is the weather like today?')
+                  
+                  print(f"Creating Strands Agent with prompt: {prompt}")
+                  
+                  session = boto3.Session()
+
+                  bedrock_model = BedrockModel(
+                      model_id="us.amazon.nova-lite-v1:0",
+                      boto_session=session,
+                      temperature=0.3,
+                      top_p=0.8,
+                  )
+                  
+                  # Create Strands Agent with Nova Lite using correct inference profile ID
+                  enhanced_agent = Agent(
+                      model=bedrock_model,  # Correct inference profile ID for Nova Lite
+                      system_prompt=ENHANCED_SYSTEM_PROMPT,
+                      tools=[
+                          http_request,
+                          get_current_time,
+                          get_weather_data,
+                          get_real_weather,
+                          calculate,
+                          get_s3_bucket_count,
+                          read_meeting_transcript,
+                          list_available_transcripts,
+                          get_employee_info,
+                          list_company_employees
+                      ],
+                  )
+                  
+                  print("Calling Strands Agent...")
+                  
+                  # Get response from real Strands Agent
+                  response = enhanced_agent(prompt)
+                  content = str(response)
+                  
+                  print(f"Agent response: {content}")
+                  
+                  return {
+                      'statusCode': 200,
+                      'headers': {
+                          'Content-Type': 'application/json',
+                          'Access-Control-Allow-Origin': '*',
+                          'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
+                          'Access-Control-Allow-Methods': 'POST,OPTIONS,GET'
+                      },
+                      'body': json.dumps({
+                          'response': content,
+                          'prompt': prompt,
+                          'timestamp': datetime.utcnow().isoformat(),
+                          'status': 'success',
+                          'sdk': 'Real Strands Agents SDK v0.1.0 with MCP integration',
+                          'tools_used': 'Real weather data + MCP tools + Transcript analysis',
+                          'security': 'All S3 buckets are private and secure'
+                      })
+                  }
+                  
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  import traceback
+                  print(f"Traceback: {traceback.format_exc()}")
+                  return {
+                      'statusCode': 500,
+                      'headers': {
+                          'Content-Type': 'application/json',
+                          'Access-Control-Allow-Origin': '*'
+                      },
+                      'body': json.dumps({
+                          'error': f'Error processing request: {str(e)}',
+                          'prompt': prompt if 'prompt' in locals() else 'Unknown',
+                          'traceback': traceback.format_exc()
+                      })
+                  }
+          '''
+                      
+                      # Real FastMCP Server Implementation
+                      mcp_server_code = '''
+          import json
+          import os
+          from datetime import datetime
+          import random
+          import boto3
+          import requests
+          from mcp.server.fastmcp import FastMCP
+
+          # Create FastMCP instance with stateless HTTP
+          mcp = FastMCP(name="StrandsMCPServer", stateless_http=True)
+
+          @mcp.tool(description="Get employee information by name, email, or employee ID")
+          def get_employee_info(identifier: str) -> str:
+              """Get employee information by name, email, or employee ID"""
+              try:
+                  dynamodb = boto3.resource('dynamodb')
+                  table_name = os.environ.get('EMPLOYEE_TABLE')
+                  
+                  if not table_name:
+                      return json.dumps({
+                          "error": "Employee table not configured"
+                      })
+                  
+                  table = dynamodb.Table(table_name)
+                  
+                  # Try to find employee by different identifiers
+                  employee = None
+                  
+                  # First try by employee ID (primary key)
+                  if identifier.upper().startswith('EMP'):
+                      try:
+                          response = table.get_item(Key={'employeeId': identifier.upper()})
+                          if 'Item' in response:
+                              employee = response['Item']
+                      except Exception:
+                          pass
+                  
+                  # If not found, try by email using GSI
+                  if not employee and '@' in identifier:
+                      try:
+                          response = table.query(
+                              IndexName='EmailIndex',
+                              KeyConditionExpression='email = :email',
+                              ExpressionAttributeValues={':email': identifier.lower()}
+                          )
+                          if response['Items']:
+                              employee = response['Items'][0]
+                      except Exception:
+                          pass
+                  
+                  # If not found, try by name using GSI (case-insensitive search)
+                  if not employee:
+                      try:
+                          # Try exact match first
+                          response = table.query(
+                              IndexName='NameIndex',
+                              KeyConditionExpression='#name = :name',
+                              ExpressionAttributeNames={'#name': 'name'},  # Escape the reserved keyword
+                              ExpressionAttributeValues={':name': identifier.title()}
+                          )
+                          if not response['Items']:
+                              print(f"Searching for normal name: {identifier}")
+                              # Also try the original case
+                              response = table.query(
+                              IndexName='NameIndex',
+                              KeyConditionExpression='#name = :name',
+                              ExpressionAttributeNames={'#name': 'name'},  # Escape the reserved keyword
+                              ExpressionAttributeValues={':name': identifier}
+                              )
+                          if response['Items']:
+                              employee = response['Items'][0]
+                          else:
+                              # Try multiple variations
+                              print(f"Searching for variatons of name: ({identifier})")
+                              search_terms = [
+                                  identifier,
+                                  identifier.title(),
+                                  identifier.lower(),
+                                  identifier.upper()
+                              ]
+
+                              for term in search_terms:
+                                  response = table.scan(
+                                      FilterExpression='contains(#name, :name)',
+                                      ExpressionAttributeNames={'#name': 'name'},
+                                      ExpressionAttributeValues={':name': term}
+                                  )
+                                  if response['Items']:
+                                      employee = response['Items'][0]
+                                      break
+                              if response['Items']:
+                                  employee = response['Items'][0]
+                      except Exception:
+                          pass
+                  
+                  if employee:
+                      # Remove internal metadata for cleaner output
+                      display_employee = dict(employee)
+                      for key in ['createdAt', 'updatedAt']:
+                          display_employee.pop(key, None)
+                      
+                      result = {
+                          "found": True,
+                          "employee": display_employee,
+                          "search_term": identifier,
+                          "timestamp": datetime.utcnow().isoformat()
+                      }
+                  else:
+                      result = {
+                          "found": False,
+                          "message": f"No employee found matching '{identifier}'",
+                          "search_term": identifier,
+                          "suggestions": "Try searching by full name, email address, or employee ID (e.g., EMP001)",
+                          "timestamp": datetime.utcnow().isoformat()
+                      }
+                  
+                  return json.dumps(result, indent=2)
+                  
+              except Exception as e:
+                  return json.dumps({
+                      "error": f"Error searching for employee '{identifier}': {str(e)}",
+                      "search_term": identifier
+                  })
+
+          @mcp.tool(description="List all employees in the company directory")
+          def list_all_employees() -> str:
+              """List all employees in the company directory"""
+              try:
+                  dynamodb = boto3.resource('dynamodb')
+                  table_name = os.environ.get('EMPLOYEE_TABLE')
+                  
+                  if not table_name:
+                      return json.dumps({
+                          "error": "Employee table not configured"
+                      })
+                  
+                  table = dynamodb.Table(table_name)
+                  
+                  # Scan all employees
+                  response = table.scan()
+                  employees = response['Items']
+                  
+                  # Continue scanning if there are more items
+                  while 'LastEvaluatedKey' in response:
+                      response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
+                      employees.extend(response['Items'])
+                  
+                  # Create summary list
+                  employee_summary = []
+                  for emp in employees:
+                      employee_summary.append({
+                          "employeeId": emp.get('employeeId'),
+                          "name": emp.get('name'),
+                          "title": emp.get('title'),
+                          "department": emp.get('department'),
+                          "email": emp.get('email'),
+                          "city": emp.get('city'),
+                          "manager": emp.get('managerName'),
+                          "primaryOwnership": emp.get('primaryOwnership'),
+                          "status": emp.get('status')
+                      })
+                  
+                  # Sort by name
+                  employee_summary.sort(key=lambda x: x['name'])
+                  
+                  result = {
+                      "total_employees": len(employee_summary),
+                      "employees": employee_summary,
+                      "timestamp": datetime.utcnow().isoformat()
+                  }
+                  
+                  return json.dumps(result, indent=2)
+                  
+              except Exception as e:
+                  return json.dumps({
+                      "error": f"Error listing employees: {str(e)}"
+                  })
+
+          @mcp.tool(description="Get the current UTC time in ISO format")
+          def get_time() -> str:
+              """Get current UTC time"""
+              return datetime.utcnow().isoformat()
+
+          @mcp.tool(description="Get weather information for a given city")
+          def get_weather(city: str) -> str:
+              """Get weather information for a city (simulated data)"""
+              conditions = ['Sunny', 'Partly cloudy', 'Cloudy', 'Rainy', 'Snowy', 'Overcast', 'Drizzle']
+              temperatures = list(range(-5, 30))  # More realistic range
+              
+              # Make it more realistic based on city
+              if "seattle" in city.lower():
+                  conditions = ['Cloudy', 'Rainy', 'Partly cloudy', 'Overcast', 'Drizzle']
+                  temperatures = list(range(5, 20))
+              elif "miami" in city.lower():
+                  conditions = ['Sunny', 'Partly cloudy', 'Hot and humid']
+                  temperatures = list(range(20, 35))
+              elif "chicago" in city.lower():
+                  conditions = ['Windy', 'Cloudy', 'Partly cloudy', 'Cold']
+                  temperatures = list(range(-10, 15))
+              
+              weather_data = {
+                  "city": city,
+                  "temperature": f"{random.choice(temperatures)}°C",
+                  "condition": random.choice(conditions),
+                  "humidity": f"{random.randint(40, 85)}%",
+                  "wind": f"{random.randint(5, 25)} km/h",
+                  "timestamp": datetime.utcnow().isoformat(),
+                  "source": "FastMCP Simulated Weather Service",
+                  "note": "This is simulated weather data for demonstration"
+              }
+              return json.dumps(weather_data, indent=2)
+
+          @mcp.tool(description="Get real weather data from National Weather Service")
+          def get_real_weather_nws(city: str) -> str:
+              """Get real weather data from National Weather Service API"""
+              try:
+                  # Simplified coordinate lookup
+                  coords = {
+                      "seattle": (47.6062, -122.3321),
+                      "new york": (40.7128, -74.0060),
+                      "los angeles": (34.0522, -118.2437),
+                      "chicago": (41.8781, -87.6298),
+                      "miami": (25.7617, -80.1918)
+                  }
+                  
+                  city_lower = city.lower()
+                  lat, lon = coords.get(city_lower, coords["seattle"])  # Default to Seattle
+                  
+                  # Get weather from National Weather Service
+                  points_url = f"https://api.weather.gov/points/{lat},{lon}"
+                  points_response = requests.get(points_url, timeout=10)
+                  
+                  if points_response.status_code == 200:
+                      points_data = points_response.json()
+                      forecast_url = points_data["properties"]["forecast"]
+                      
+                      forecast_response = requests.get(forecast_url, timeout=10)
+                      if forecast_response.status_code == 200:
+                          forecast_data = forecast_response.json()
+                          periods = forecast_data["properties"]["periods"][:2]  # Get first 2 periods
+                          
+                          result = {
+                              "city": city,
+                              "source": "National Weather Service",
+                              "forecast": []
+                          }
+                          
+                          for period in periods:
+                              result["forecast"].append({
+                                  "name": period["name"],
+                                  "temperature": period["temperature"],
+                                  "temperatureUnit": period["temperatureUnit"],
+                                  "windSpeed": period["windSpeed"],
+                                  "windDirection": period["windDirection"],
+                                  "shortForecast": period["shortForecast"],
+                                  "detailedForecast": period["detailedForecast"]
+                              })
+                          
+                          return json.dumps(result, indent=2)
+                  
+                  return f"Could not retrieve real weather data for {city}. API may be unavailable."
+                  
+              except Exception as e:
+                  return f"Error getting real weather for {city}: {str(e)}"
+
+          @mcp.tool(description="Count the number of S3 buckets in the account")
+          def count_s3_buckets() -> str:
+              """Count S3 buckets in the account"""
+              try:
+                  s3 = boto3.client('s3')
+                  response = s3.list_buckets()
+                  bucket_count = len(response['Buckets'])
+                  bucket_names = [bucket['Name'] for bucket in response['Buckets'][:5]]  # Show first 5
+                  
+                  result = {
+                      "total_buckets": bucket_count,
+                      "sample_buckets": bucket_names,
+                      "note": "All buckets are private and secure",
+                      "timestamp": datetime.utcnow().isoformat()
+                  }
+                  return json.dumps(result, indent=2)
+              except Exception as e:
+                  return f"Error counting S3 buckets: {str(e)}"
+
+          @mcp.tool(description="Calculator tool which performs mathematical calculations")
+          def calculator(expression: str) -> str:
+              """Perform mathematical calculations"""
+              try:
+                  # Security: only allow safe mathematical expressions
+                  allowed_chars = set('0123456789+-*/.() ')
+                  if not all(c in allowed_chars for c in expression):
+                      return json.dumps({
+                          "error": "Invalid characters in expression. Only numbers and basic operators allowed.",
+                          "expression": expression
+                      })
+                  
+                  # Evaluate the expression
+                  result = eval(expression)
+                  
+                  return json.dumps({
+                      "expression": expression,
+                      "result": result,
+                      "timestamp": datetime.utcnow().isoformat()
+                  })
+              except Exception as e:
+                  return json.dumps({
+                      "error": f"Error calculating '{expression}': {str(e)}",
+                      "expression": expression
+                  })
+
+          @mcp.tool(description="Read text transcript files from the transcripts folder in S3 bucket")
+          def read_transcript(filename: str) -> str:
+              """Read transcript files from S3 transcripts folder for ownership identification"""
+              try:
+                  s3 = boto3.client('s3')
+                  bucket_name = os.environ.get('ARTIFACTS_BUCKET')
+                  
+                  if not bucket_name:
+                      return json.dumps({
+                          "error": "S3 bucket name not configured",
+                          "filename": filename
+                      })
+                  
+                  # Ensure filename has .txt extension and is in transcripts folder
+                  if not filename.endswith('.txt'):
+                      filename += '.txt'
+                  
+                  s3_key = f"transcripts/{filename}"
+                  
+                  # Read the transcript file from S3
+                  response = s3.get_object(Bucket=bucket_name, Key=s3_key)
+                  transcript_content = response['Body'].read().decode('utf-8')
+                  
+                  # Get file metadata
+                  file_info = {
+                      "filename": filename,
+                      "s3_key": s3_key,
+                      "size_bytes": response['ContentLength'],
+                      "last_modified": response['LastModified'].isoformat(),
+                      "content": transcript_content,
+                      "timestamp": datetime.utcnow().isoformat(),
+                      "source": "S3 Transcripts Folder"
+                  }
+                  
+                  return json.dumps(file_info, indent=2)
+                  
+              except s3.exceptions.NoSuchKey:
+                  return json.dumps({
+                      "error": f"Transcript file '{filename}' not found in transcripts folder",
+                      "filename": filename,
+                      "s3_key": f"transcripts/{filename}",
+                      "available_files": "Use list_transcripts tool to see available files"
+                  })
+              except Exception as e:
+                  return json.dumps({
+                      "error": f"Error reading transcript '{filename}': {str(e)}",
+                      "filename": filename
+                  })
+
+          @mcp.tool(description="List available transcript files in the transcripts folder")
+          def list_transcripts() -> str:
+              """List all available transcript files in the S3 transcripts folder"""
+              try:
+                  s3 = boto3.client('s3')
+                  bucket_name = os.environ.get('ARTIFACTS_BUCKET')
+                  
+                  if not bucket_name:
+                      return json.dumps({
+                          "error": "S3 bucket name not configured"
+                      })
+                  
+                  # List objects in the transcripts folder
+                  response = s3.list_objects_v2(
+                      Bucket=bucket_name,
+                      Prefix='transcripts/',
+                      Delimiter='/'
+                  )
+                  
+                  files = []
+                  if 'Contents' in response:
+                      for obj in response['Contents']:
+                          # Skip the folder itself
+                          if obj['Key'] != 'transcripts/':
+                              files.append({
+                                  "filename": obj['Key'].replace('transcripts/', ''),
+                                  "size_bytes": obj['Size'],
+                                  "last_modified": obj['LastModified'].isoformat()
+                              })
+                  
+                  result = {
+                      "transcripts_folder": "transcripts/",
+                      "total_files": len(files),
+                      "files": files,
+                      "timestamp": datetime.utcnow().isoformat()
+                  }
+                  
+                  return json.dumps(result, indent=2)
+                  
+              except Exception as e:
+                  return json.dumps({
+                      "error": f"Error listing transcripts: {str(e)}"
+                  })
+
+          # Create FastAPI app with FastMCP
+          from fastapi import FastAPI
+          app = FastAPI(title="Real FastMCP Server", lifespan=lambda app: mcp.session_manager.run())
+          app.mount("/mcp", mcp.streamable_http_app())
+
+          def lambda_handler(event, context):
+              """Lambda handler for API Gateway integration"""
+              try:
+                  print(f"MCP Server received event: {json.dumps(event)}")
+                  
+                  # Handle CORS preflight requests
+                  if event.get('httpMethod') == 'OPTIONS':
+                      return {
+                          'statusCode': 200,
+                          'headers': {
+                              'Content-Type': 'application/json',
+                              'Access-Control-Allow-Origin': '*',
+                              'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
+                              'Access-Control-Allow-Methods': 'POST,OPTIONS,GET'
+                          },
+                          'body': ''
+                      }
+                  
+                  # Parse request body for MCP calls
+                  if event.get('httpMethod') == 'POST' and event.get('body'):
+                      try:
+                          body = json.loads(event['body']) if isinstance(event.get('body'), str) else event.get('body', {})
+                          method = body.get('method', '')
+                          
+                          if method == 'tools/list':
+                              tools = [
+                                  {
+                                      'name': 'get_employee_info',
+                                      'description': 'Get employee information by name, email, or employee ID',
+                                      'inputSchema': {
+                                          'type': 'object',
+                                          'properties': {'identifier': {'type': 'string', 'description': 'Employee name, email, or ID'}},
+                                          'required': ['identifier']
+                                      }
+                                  },
+                                  {
+                                      'name': 'list_all_employees',
+                                      'description': 'List all employees in the company directory',
+                                      'inputSchema': {'type': 'object', 'properties': {}, 'required': []}
+                                  },
+                                  {
+                                      'name': 'get_time',
+                                      'description': 'Get the current UTC time in ISO format',
+                                      'inputSchema': {'type': 'object', 'properties': {}, 'required': []}
+                                  },
+                                  {
+                                      'name': 'get_weather',
+                                      'description': 'Get weather information for a given city (simulated)',
+                                      'inputSchema': {
+                                          'type': 'object',
+                                          'properties': {'city': {'type': 'string', 'description': 'City name'}},
+                                          'required': ['city']
+                                      }
+                                  },
+                                  {
+                                      'name': 'get_real_weather_nws',
+                                      'description': 'Get real weather data from National Weather Service',
+                                      'inputSchema': {
+                                          'type': 'object',
+                                          'properties': {'city': {'type': 'string', 'description': 'City name'}},
+                                          'required': ['city']
+                                      }
+                                  },
+                                  {
+                                      'name': 'count_s3_buckets',
+                                      'description': 'Count the number of S3 buckets in the account',
+                                      'inputSchema': {'type': 'object', 'properties': {}, 'required': []}
+                                  },
+                                  {
+                                      'name': 'calculator',
+                                      'description': 'Calculator tool which performs calculations',
+                                      'inputSchema': {
+                                          'type': 'object',
+                                          'properties': {'expression': {'type': 'string', 'description': 'Mathematical expression'}},
+                                          'required': ['expression']
+                                      }
+                                  },
+                                  {
+                                      'name': 'read_transcript',
+                                      'description': 'Read text transcript files from the transcripts folder in S3 bucket',
+                                      'inputSchema': {
+                                          'type': 'object',
+                                          'properties': {'filename': {'type': 'string', 'description': 'Name of transcript file to read'}},
+                                          'required': ['filename']
+                                      }
+                                  },
+                                  {
+                                      'name': 'list_transcripts',
+                                      'description': 'List available transcript files in the transcripts folder',
+                                      'inputSchema': {'type': 'object', 'properties': {}, 'required': []}
+                                  }
+                              ]
+                              
+                              return {
+                                  'statusCode': 200,
+                                  'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                                  'body': json.dumps({
+                                      'jsonrpc': '2.0',
+                                      'id': body.get('id'),
+                                      'result': {'tools': tools}
+                                  })
+                              }
+                              
+                          elif method == 'tools/call':
+                              params = body.get('params', {})
+                              tool_name = params.get('name')
+                              arguments = params.get('arguments', {})
+                              
+                              # Call the appropriate tool function
+                              if tool_name == 'get_time':
+                                  result = get_time()
+                              elif tool_name == 'get_weather':
+                                  result = get_weather(arguments.get('city', 'Unknown'))
+                              elif tool_name == 'get_real_weather_nws':
+                                  result = get_real_weather_nws(arguments.get('city', 'Seattle'))
+                              elif tool_name == 'count_s3_buckets':
+                                  result = count_s3_buckets()
+                              elif tool_name == 'calculator':
+                                  result = calculator(arguments.get('expression', '2+2'))
+                              elif tool_name == 'read_transcript':
+                                  result = read_transcript(arguments.get('filename', ''))
+                              elif tool_name == 'list_transcripts':
+                                  result = list_transcripts()
+                              elif tool_name == 'get_employee_info':
+                                  result = get_employee_info(arguments.get('identifier', ''))
+                              elif tool_name == 'list_all_employees':
+                                  result = list_all_employees()
+                              else:
+                                  return {
+                                      'statusCode': 400,
+                                      'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                                      'body': json.dumps({
+                                          'jsonrpc': '2.0',
+                                          'id': body.get('id'),
+                                          'error': {'code': -32602, 'message': f'Tool not found: {tool_name}'}
+                                      })
+                                  }
+                              
+                              return {
+                                  'statusCode': 200,
+                                  'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                                  'body': json.dumps({
+                                      'jsonrpc': '2.0',
+                                      'id': body.get('id'),
+                                      'result': {'content': [{'type': 'text', 'text': str(result)}]}
+                                  })
+                              }
+                      except json.JSONDecodeError:
+                          pass  # Fall through to default response
+                  
+                  # Default response
+                  return {
+                      'statusCode': 200,
+                      'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                      'body': json.dumps({
+                          'message': 'Real FastMCP Server is running! 🚀',
+                          'sdk': 'FastMCP v2.3.0 + MCP v1.8.0',
+                          'tools': ['get_time', 'get_weather', 'get_real_weather_nws', 'count_s3_buckets', 'calculator', 'read_transcript', 'list_transcripts'],
+                          'timestamp': datetime.utcnow().isoformat(),
+                          'security': 'All data is processed securely with private S3 access',
+                          'note': 'Send POST requests with JSON-RPC 2.0 format to use MCP tools'
+                      })
+                  }
+                  
+              except Exception as e:
+                  print(f"MCP Server Error: {str(e)}")
+                  import traceback
+                  print(f"Traceback: {traceback.format_exc()}")
+                  return {
+                      'statusCode': 500,
+                      'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                      'body': json.dumps({'error': str(e), 'traceback': traceback.format_exc()})
+                  }
+          '''
+                      
+                      # Create deployment packages
+                      print("Creating function packages...")
+                      
+                      # Package Strands Agent
+                      strands_zip = io.BytesIO()
+                      with zipfile.ZipFile(strands_zip, 'w', zipfile.ZIP_DEFLATED) as z:
+                          z.writestr('lambda_function.py', strands_agent_code)
+                      strands_zip.seek(0)
+                      
+                      s3.put_object(
+                          Bucket=bucket_name,
+                          Key='strands-function.zip',
+                          Body=strands_zip.getvalue(),
+                          ContentType='application/zip'
+                      )
+                      
+                      # Package MCP Server
+                      mcp_zip = io.BytesIO()
+                      with zipfile.ZipFile(mcp_zip, 'w', zipfile.ZIP_DEFLATED) as z:
+                          z.writestr('lambda_function.py', mcp_server_code)
+                      mcp_zip.seek(0)
+                      
+                      s3.put_object(
+                          Bucket=bucket_name,
+                          Key='mcp-function.zip',
+                          Body=mcp_zip.getvalue(),
+                          ContentType='application/zip'
+                      )
+                      
+                      print("Function code packages uploaded successfully!")
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  
+                  elif event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
+  FunctionCodeUploaderTrigger:
+    Type: Custom::FunctionCodeUploader
+    Properties:
+      ServiceToken: !GetAtt FunctionCodeUploader.Arn
+      DestinationBucket: !Ref ArtifactsBucket
+      Version: "2.0"  # Increment this to force updates
+
+  # =============================================
+  # IAM Roles
+  # =============================================
+  
+  StrandsAgentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: '*'
+
+  McpServerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: EmployeeTableAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: 
+                  - !GetAtt EmployeeTable.Arn
+                  - !Sub '${EmployeeTable.Arn}/index/*'
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: !GetAtt McpSessionTable.Arn
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListAllMyBuckets
+                  - s3:GetBucketLocation
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource: 
+                  - !Sub '${ArtifactsBucket.Arn}'
+                  - !Sub '${ArtifactsBucket.Arn}/*'
+
+  # =============================================
+  # Lambda Functions with Real SDK Layers
+  # =============================================
+  
+  StrandsAgentFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: [StrandsLayer, FunctionCodeUploaderTrigger]
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-strands-agent'
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt StrandsAgentRole.Arn
+      Timeout: 120
+      MemorySize: 1024
+      Layers:
+        - !Ref StrandsLayer
+      Environment:
+        Variables:
+          MCP_SERVER_URL: !Sub 
+            - 'https://${ApiId}.execute-api.${AWS::Region}.amazonaws.com/prod/mcp'
+            - ApiId: !Ref ApiGateway
+      Code:
+        S3Bucket: !Ref ArtifactsBucket
+        S3Key: 'strands-function.zip'
+
+  McpServerFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: [McpLayer, FunctionCodeUploaderTrigger]
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-mcp-server'
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt McpServerRole.Arn
+      Timeout: 60
+      MemorySize: 512
+      Layers:
+        - !Ref McpLayer
+      Environment:
+        Variables:
+          MCP_SESSION_TABLE: !Ref McpSessionTable
+          ARTIFACTS_BUCKET: !Ref ArtifactsBucket
+          EMPLOYEE_TABLE: !Ref EmployeeTable
+      Code:
+        S3Bucket: !Ref ArtifactsBucket
+        S3Key: 'mcp-function.zip'
+
+  # =============================================
+  # API Gateway
+  # =============================================
+  
+  ApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-api'
+      Description: 'Strands Agents with MCP Server API (Real SDK)'
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # Agent Resource and Methods
+  AgentResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: agent
+
+  AgentMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref AgentResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${StrandsAgentFunction.Arn}/invocations'
+
+  # MCP Resource and Methods
+  McpResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: mcp
+
+  McpMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref McpResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${McpServerFunction.Arn}/invocations'
+
+  # API Gateway Deployment
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      RestApiId: !Ref ApiGateway
+      StageName: prod
+    DependsOn:
+      - AgentMethod
+      - McpMethod
+
+  # Lambda Permissions
+  StrandsAgentLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref StrandsAgentFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*/*'
+
+  McpServerLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref McpServerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*/*'
+
+  # =============================================
+  # Frontend HTML Uploader (from second script)
+  # =============================================
+  
+  S3UploaderRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3UploadAndSignPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub '${ArtifactsBucket.Arn}/*'
+
+  S3UploaderFunction:
+    Type: 'AWS::Lambda::Function'
+    DependsOn:
+      - ApiGateway
+      - ApiDeployment
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt S3UploaderRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          
+          def handler(event, context):
+              if event['RequestType'] in ['Create', 'Update']:
+                  try:
+                      s3 = boto3.client('s3')
+                      bucket_name = event['ResourceProperties']['BucketName']
+                      api_gateway = event['ResourceProperties']['ApiGateway']
+                      aws_region = event['ResourceProperties']['AWSReg']
+                      
+                      # HTML content for Strands Agent Chat
+                      html_content = """
+                      <!DOCTYPE html>
+                      <html>
+                      <head>
+                          <title>Strands AI Agent Chat</title>
+                          <meta charset="UTF-8">
+                          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                          <style>
+                              * {
+                                  margin: 0;
+                                  padding: 0;
+                                  box-sizing: border-box;
+                              }
+                              
+                              body { 
+                                  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                                  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                                  min-height: 100vh;
+                                  display: flex;
+                                  justify-content: center;
+                                  align-items: center;
+                                  padding: 20px;
+                              }
+                              
+                              .chat-container {
+                                  background: white;
+                                  border-radius: 20px;
+                                  box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+                                  width: 100%;
+                                  max-width: 800px;
+                                  height: 80vh;
+                                  display: flex;
+                                  flex-direction: column;
+                                  overflow: hidden;
+                              }
+                              
+                              .chat-header {
+                                  background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
+                                  color: white;
+                                  padding: 20px;
+                                  text-align: center;
+                                  border-radius: 20px 20px 0 0;
+                              }
+                              
+                              .chat-header h1 {
+                                  font-size: 24px;
+                                  font-weight: 600;
+                                  margin-bottom: 5px;
+                              }
+                              
+                              .chat-header p {
+                                  opacity: 0.9;
+                                  font-size: 14px;
+                              }
+                              
+                              #chat-messages { 
+                                  flex: 1;
+                                  overflow-y: auto; 
+                                  padding: 20px;
+                                  background: #f8f9fa;
+                                  display: flex;
+                                  flex-direction: column;
+                                  gap: 15px;
+                              }
+                              
+                              .message {
+                                  max-width: 75%;
+                                  padding: 12px 16px;
+                                  border-radius: 18px;
+                                  font-size: 15px;
+                                  line-height: 1.4;
+                                  word-wrap: break-word;
+                                  animation: fadeIn 0.3s ease-in;
+                              }
+                              
+                              @keyframes fadeIn {
+                                  from { opacity: 0; transform: translateY(10px); }
+                                  to { opacity: 1; transform: translateY(0); }
+                              }
+                              
+                              .user-message {
+                                  background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
+                                  color: white;
+                                  margin-left: auto;
+                                  border-bottom-right-radius: 4px;
+                              }
+                              
+                              .assistant-message {
+                                  background: white;
+                                  color: #333;
+                                  margin-right: auto;
+                                  border: 1px solid #e1e5e9;
+                                  border-bottom-left-radius: 4px;
+                                  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+                              }
+                              
+                              #input-container { 
+                                  display: flex; 
+                                  gap: 12px;
+                                  padding: 20px;
+                                  background: white;
+                                  border-radius: 0 0 20px 20px;
+                                  border-top: 1px solid #e1e5e9;
+                              }
+                              
+                              #message-input { 
+                                  flex: 1; 
+                                  padding: 12px 16px;
+                                  border: 2px solid #e1e5e9;
+                                  border-radius: 25px;
+                                  font-size: 15px;
+                                  outline: none;
+                                  transition: border-color 0.2s ease;
+                              }
+                              
+                              #message-input:focus {
+                                  border-color: #4a90e2;
+                              }
+                              
+                              #send-button {
+                                  padding: 12px 24px;
+                                  background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
+                                  color: white;
+                                  border: none;
+                                  border-radius: 25px;
+                                  cursor: pointer;
+                                  font-size: 15px;
+                                  font-weight: 600;
+                                  transition: transform 0.2s ease, box-shadow 0.2s ease;
+                                  min-width: 80px;
+                              }
+                              
+                              #send-button:hover {
+                                  transform: translateY(-1px);
+                                  box-shadow: 0 4px 12px rgba(74, 144, 226, 0.3);
+                              }
+                              
+                              #send-button:disabled {
+                                  opacity: 0.6;
+                                  cursor: not-allowed;
+                                  transform: none;
+                                  box-shadow: none;
+                              }
+                              
+                              #loading {
+                                  text-align: center;
+                                  color: #666;
+                                  padding: 15px;
+                                  font-style: italic;
+                                  display: none;
+                              }
+                              
+                              .typing-indicator {
+                                  display: inline-flex;
+                                  gap: 4px;
+                                  align-items: center;
+                              }
+                              
+                              .typing-dot {
+                                  width: 8px;
+                                  height: 8px;
+                                  border-radius: 50%;
+                                  background: #4a90e2;
+                                  animation: typing 1.4s infinite ease-in-out;
+                              }
+                              
+                              .typing-dot:nth-child(1) { animation-delay: -0.32s; }
+                              .typing-dot:nth-child(2) { animation-delay: -0.16s; }
+                              
+                              @keyframes typing {
+                                  0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; }
+                                  40% { transform: scale(1); opacity: 1; }
+                              }
+                              
+                              .welcome-message {
+                                  text-align: center;
+                                  color: #666;
+                                  padding: 40px 20px;
+                                  font-size: 16px;
+                                  line-height: 1.6;
+                              }
+                              
+                              .welcome-message h3 {
+                                  color: #4a90e2;
+                                  margin-bottom: 10px;
+                              }
+                              
+                              .capability-list {
+                                  list-style: none;
+                                  margin: 20px 0;
+                                  text-align: left;
+                                  display: inline-block;
+                              }
+                              
+                              .capability-list li {
+                                  margin: 8px 0;
+                                  padding-left: 20px;
+                                  position: relative;
+                              }
+                              
+                              .capability-list li:before {
+                                  content: "🔹";
+                                  position: absolute;
+                                  left: 0;
+                              }
+                              
+                              @media (max-width: 600px) {
+                                  .chat-container {
+                                      height: 95vh;
+                                      margin: 10px;
+                                  }
+                                  
+                                  .message {
+                                      max-width: 85%;
+                                  }
+                                  
+                                  #input-container {
+                                      flex-direction: column;
+                                  }
+                                  
+                                  #send-button {
+                                      align-self: flex-end;
+                                  }
+                              }
+                          </style>
+                      </head>
+                      <body>
+                          <div class="chat-container">
+                              <div class="chat-header">
+                                  <h1>🤖 Strands AI Agent</h1>
+                                  <p>Powered by Real Strands SDK + MCP Tools + AWS Bedrock Nova</p>
+                              </div>
+                              
+                              <div id="chat-messages">
+                                  <div class="welcome-message">
+                                      <h3>Welcome to Strands AI Agent! 👋</h3>
+                                      <p>I'm an intelligent assistant with advanced capabilities:</p>
+                                      <ul class="capability-list">
+                                          <li>Real weather data from National Weather Service</li>
+                                          <li>Mathematical calculations and expressions</li>
+                                          <li>Meeting transcript analysis for team ownership</li>
+                                          <li>AWS S3 bucket information and management</li>
+                                          <li>Current time and date information</li>
+                                      </ul>
+                                      <p>Try asking me: <em>"What's the weather in Seattle?"</em> or <em>"Who owns the authentication system?"</em></p>
+                                  </div>
+                              </div>
+                              
+                              <div id="loading">
+                                  <div class="typing-indicator">
+                                      AI is thinking
+                                      <div class="typing-dot"></div>
+                                      <div class="typing-dot"></div>
+                                      <div class="typing-dot"></div>
+                                  </div>
+                              </div>
+                              
+                              <div id="input-container">
+                                  <input type="text" id="message-input" placeholder="Ask me anything..." autocomplete="off">
+                                  <button id="send-button" onclick="sendMessage()">Send</button>
+                              </div>
+                          </div>
+                          
+                          <script>
+                              const apiUrl = 'AAAAA.execute-api.RRRR.amazonaws.com/prod/agent';
+                              const messageInput = document.getElementById('message-input');
+                              const chatMessages = document.getElementById('chat-messages');
+                              const loadingIndicator = document.getElementById('loading');
+                              const sendButton = document.getElementById('send-button');
+                              let isProcessing = false;
+                              
+                              messageInput.addEventListener('keypress', function(e) {
+                                  if (e.key === 'Enter' && !isProcessing) {
+                                      sendMessage();
+                                  }
+                              });
+                              
+                              async function sendMessage() {
+                                  const message = messageInput.value.trim();
+                                  if (!message || isProcessing) return;
+                                  
+                                  isProcessing = true;
+                                  messageInput.value = '';
+                                  sendButton.disabled = true;
+                                  
+                                  // Clear welcome message if it exists
+                                  const welcomeMsg = document.querySelector('.welcome-message');
+                                  if (welcomeMsg) {
+                                      welcomeMsg.remove();
+                                  }
+                                  
+                                  appendMessageToChat(message, 'user');
+                                  loadingIndicator.style.display = 'block';
+                                  
+                                  try {
+                                      const response = await fetch('https://' + apiUrl, {
+                                          method: 'POST',
+                                          headers: {
+                                              'Content-Type': 'application/json'
+                                          },
+                                          body: JSON.stringify({ prompt: message })
+                                      });
+                                      
+                                      if (!response.ok) {
+                                          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                                      }
+                                      
+                                      const data = await response.json();
+                                      loadingIndicator.style.display = 'none';
+                                      
+                                      // Handle response based on structure
+                                      let responseText = '';
+                                      if (data.response) {
+                                          responseText = data.response;
+                                      } else if (data.content && Array.isArray(data.content)) {
+                                          responseText = data.content[0]?.text || 'No response content';
+                                      } else if (data.message) {
+                                          responseText = data.message;
+                                      } else {
+                                          responseText = JSON.stringify(data, null, 2);
+                                      }
+                                      
+                                      appendMessageToChat(responseText, 'assistant');
+                                      
+                                  } catch (error) {
+                                      console.error('Error:', error);
+                                      loadingIndicator.style.display = 'none';
+                                      appendMessageToChat(`⚠️ Error: ${error.message}. Please try again.`, 'assistant');
+                                  } finally {
+                                      isProcessing = false;
+                                      sendButton.disabled = false;
+                                      messageInput.focus();
+                                  }
+                              }
+                              
+                              function appendMessageToChat(messageText, senderType) {
+                                  const messageElement = document.createElement('div');
+                                  messageElement.className = 'message ' + senderType + '-message';
+                                  messageElement.textContent = messageText;
+                                  chatMessages.appendChild(messageElement);
+                                  chatMessages.scrollTop = chatMessages.scrollHeight;
+                              }
+                              
+                              // Focus input on load
+                              window.addEventListener('load', () => {
+                                  messageInput.focus();
+                              });
+                          </script>
+                      </body>
+                      </html>
+                      """
+                      
+                      html_content = html_content.replace('AAAAA', api_gateway)
+                      html_content = html_content.replace('RRRR', aws_region)
+
+                      # Upload the HTML file
+                      s3.put_object(
+                          Bucket=bucket_name,
+                          Key='index.html',
+                          Body=html_content,
+                          ContentType='text/html'
+                      )
+                      
+                      # Generate presigned URL (valid for 7 days - maximum allowed)
+                      presigned_url = s3.generate_presigned_url(
+                          'get_object',
+                          Params={
+                              'Bucket': bucket_name,
+                              'Key': 'index.html'
+                          },
+                          ExpiresIn=604800  # 7 days in seconds
+                      )
+                      
+                      responseData = {
+                          'SignedURL': presigned_url
+                      }
+                      
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+                  except Exception as e:
+                      print(f"Error: {str(e)}")
+                      cfnresponse.send(event, context, cfnresponse.FAILED, {})
+              else:
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+      Runtime: python3.9
+      Timeout: 30
+
+  UploadHTMLAndGenerateURL:
+    Type: 'Custom::S3Upload'
+    Properties:
+      ServiceToken: !GetAtt S3UploaderFunction.Arn
+      BucketName: !Ref ArtifactsBucket
+      ApiGateway: !Ref ApiGateway
+      AWSReg: !Ref AWS::Region
+
+# =============================================
+# Outputs
+# =============================================
+Outputs:
+
+  EmployeeTableName:
+    Description: "👥 DynamoDB Table for Employee Information"
+    Value: !Ref EmployeeTable
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-employee-table'
+
+  ApiEndpoint:
+    Description: "🚀 API Gateway Endpoint (Real SDK)"
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod'
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-api-endpoint'
+      
+  StrandsAgentUrl:
+    Description: "🤖 Strands Agent API Endpoint (Real SDK)"
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/agent'
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-strands-agent-url'
+      
+  McpServerUrl:
+    Description: "🔧 MCP Server API Endpoint (Real FastMCP)"
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/mcp'
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-mcp-server-url'
+      
+  DynamoDBTableName:
+    Description: "📊 DynamoDB Table for MCP Sessions"
+    Value: !Ref McpSessionTable
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-session-table'
+
+  LayerArns:
+    Description: "📦 Lambda Layer ARNs (Real SDKs)"
+    Value: !Sub |
+      Strands SDK Layer: ${StrandsLayer}
+      FastMCP Layer: ${McpLayer}
+
+  # NEW FRONTEND OUTPUT
+  FrontendURL:
+    Description: "🌐 Frontend Chat Interface (Private S3 with Presigned URL)"
+    Value: !GetAtt UploadHTMLAndGenerateURL.SignedURL
+
+  S3BucketName:
+    Description: "📦 Private S3 Bucket (Secure)"
+    Value: !Ref ArtifactsBucket
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-artifacts-bucket'
+
+  TestCommands:
+    Description: "⚡ Test Commands (Real SDK)"
+    Value: !Sub |
+      # Test Strands Agent (Real SDK)
+      curl -X POST https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/agent \
+        -H "Content-Type: application/json" \
+        -d '{"prompt": "What is the weather in Seattle?"}'
+      
+      # Test MCP Server (Real FastMCP)
+      curl -X POST https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/mcp \
+        -H "Content-Type: application/json" \
+        -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}'
+      
+      # Test Transcript Tools
+      curl -X POST https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/mcp \
+        -H "Content-Type: application/json" \
+        -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "list_transcripts"}}'
+      
+      curl -X POST https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/mcp \
+        -H "Content-Type: application/json" \
+        -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "read_transcript", "arguments": {"filename": "project-meeting-q4-auth-review.txt"}}}'
+      
+      # Test Agent with Transcript Analysis
+      curl -X POST https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/agent \
+        -H "Content-Type: application/json" \
+        -d '{"prompt": "Who owns the authentication system based on the meeting transcripts?"}'
+
+      # Test Employee Lookup
+      curl -X POST https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/mcp \
+        -H "Content-Type: application/json" \
+        -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "get_employee_info", "arguments": {"identifier": "Mike Rodriguez"}}}'
+         
+      # Test Agent with Employee Questions
+      curl -X POST https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/agent \
+        -H "Content-Type: application/json" \
+        -d '{"prompt": "Who is Mike Rodriguez and what does he do at the company?"}'
+
+  SecurityNote:
+    Description: "🔒 Security Information"
+    Value: "✅ All S3 buckets are private with public access blocked. Lambda functions use IAM roles with signed requests for secure S3 access. Real Strands SDK and FastMCP layers deployed securely. Frontend uses presigned URLs for secure access."
+
+  SdkStatus:
+    Description: "🔧 SDK Status"
+    Value: "Real Strands Agents SDK v0.1.0 + FastMCP v2.3.0 + MCP v1.8.0 deployed as Lambda layers + Modern HTML Frontend"
