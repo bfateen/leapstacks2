@@ -1,0 +1,72 @@
+{
+    "title": "Generative AI Prototype Environment",
+    "description": "Launch Gen AI prototypes with one click",
+    "icon": "/api/placeholder/48/48",
+    "videoUrl": "https://example.com/video1",
+    "explainers":
+   [
+    {
+        "name": "S3 (Simple Storage Service)",
+        "term": "s3",
+        "videoURL": "LEAP_S3",
+        "description": "Amazon S3 is an object storage service offering industry-leading scalability, data availability, security, and performance. It can be used to store and protect any amount of data for various use cases, such as websites, mobile applications, backup and restore, archive, enterprise applications, IoT devices, and big data analytics.",
+        "links": ["https://docs.aws.amazon.com/s3/"]
+    },
+       {
+        "name": "Welcome",
+        "term": "welcome video",
+        "videoURL": "welcomesmall3.mp4",
+        "description": "Amazon S3 is an object storage service offering industry-leading scalability, data availability, security, and performance. It can be used to store and protect any amount of data for various use cases, such as websites, mobile applications, backup and restore, archive, enterprise applications, IoT devices, and big data analytics.",
+        "links": ["https://docs.aws.amazon.com/s3/"]
+    },
+    {
+        "name": "Lambda",
+        "term": "lambda",
+        "videoURL": "LEAP_Lambda",
+        "description": "AWS Lambda is a serverless compute service that runs your code in response to events and automatically manages the underlying compute resources. It allows you to run code without provisioning or managing servers, making it ideal for building serverless applications and automating tasks.",
+        "links": ["https://docs.aws.amazon.com/lambda/"]
+    },
+    {
+        "name": "API Gateway",
+        "term": "API Gateway",
+        "videoURL": "LEAP_APIGateway",
+        "description": "Amazon API Gateway is a fully managed service that makes it easy to create, publish, maintain, monitor, and secure APIs at any scale. It acts as a 'front door' for applications to access data, business logic, or functionality from your backend services.",
+        "links": ["https://docs.aws.amazon.com/apigateway/"]
+    },
+    {
+        "name": "Amazon Bedrock",
+        "term": "bedrock",
+        "videoURL": "LEAP_Bedrock",
+        "description": "Amazon Bedrock is a fully managed service that offers high-performing foundation models (FMs) from leading AI companies through a single API. It enables you to build and scale generative AI applications with a choice of models, security, and privacy.",
+        "links": ["https://docs.aws.amazon.com/bedrock/"]
+    },
+    {
+        "name": "Knowledge Base",
+        "term": "knowledge base",
+        "videoURL": "https://www.youtube.com/embed/NU3RGTPUMyI?si=CBtXw7fnzpiHbnjM",
+        "description": "A knowledge base is a centralized repository of organized information that can be used to store, manage, and retrieve structured and unstructured data. In AI applications, it serves as a source of domain-specific information that can be used to enhance the accuracy and relevance of AI responses.",
+        "links": ["https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base.html"]
+    },
+    {
+        "name": "Agents",
+        "term": "agent",
+        "videoURL": "https://www.youtube.com/embed/JBXSwvdJJ6Q?si=-vmd8CfLz7ipX5mc&amp;start=90",
+        "description": "AI Agents are autonomous or semi-autonomous programs that can perceive their environment and take actions to achieve specific goals. They can interact with external services, make decisions, and execute tasks based on their programming and the information available to them.",
+        "links": ["https://aws.amazon.com/bedrock/agents/"]
+    },
+    {
+        "name": "Prompt Engineering",
+        "term": "prompt engineering",
+        "videoURL": "https://www.youtube.com/embed/Bwusf3gFKOU?si=MlRSivcjxALr1fF9&amp;start=135",
+        "description": "Prompt engineering is the practice of designing and optimizing input prompts for AI language models to generate more accurate, relevant, and useful responses. It involves techniques and strategies to effectively communicate with AI models to achieve desired outcomes.",
+        "links": ["https://docs.aws.amazon.com/bedrock/latest/userguide/what-is-prompt-engineering.html"]
+    },
+    {
+        "name": "Retrieval Augmented Generation",
+        "term": "rag",
+        "videoURL": "https://www.youtube.com/embed/NU3RGTPUMyI?si=iwhhqArdQFFHUjMC",
+        "description": "Retrieval Augmented Generation (RAG) is an AI architecture that combines information retrieval with text generation. It enhances Large Language Models by retrieving relevant information from a knowledge base before generating responses, improving accuracy and providing up-to-date information.",
+        "links": ["https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base.html"]
+    }
+]
+}

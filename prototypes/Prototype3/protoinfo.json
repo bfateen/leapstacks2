@@ -1,0 +1,36 @@
+{
+    "title": "Chat with a website",
+    "description": "A multi-modal application that can view and monitor websites for changes.",
+    "fulldescription": "A full-stack application that enables intelligent document interactions using Amazon Bedrock's Knowledge Base and Agent capabilities. This prototype demonstrates Retrieval-Augmented Generation (RAG) on Amazon Bedrock for building AI-powered document question-answering systems.",
+    "icon": "leapai_web.png",
+    "videoUrl": "Proto3.mp4",
+    "services": [
+        {
+            "name":"S3",
+            "desc":""
+        },
+        {
+            "name": "API Gateway",
+            "desc": ""
+        },{
+            "name": "Lambda",
+            "desc": ""
+        },{
+            "name": "Bedrock",
+            "desc": ""
+        }
+    ],
+    "estimatedCost": "$0.025/hr",
+    "nextStepsHTML":"",
+    "estimatedTimeString": "Setup time: 2 minutes",
+    "estimatedSetupTime": 140,
+    "costDetailsHTML":"<div style=\"max-width:700px;margin:20px auto;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);border-radius:15px;padding:25px;color:white;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.2)\"><div style=\"text-align:center;margin-bottom:20px\"><h3 style=\"margin:0 0 10px 0;font-size:1.8rem;font-weight:700\">AWS Web Scraping & Monitoring</h3><div style=\"background:rgba(255,255,255,0.2);padding:15px;border-radius:10px\"><div style=\"font-size:2.2rem;font-weight:900;margin:0\">$0.02-0.50/hr</div><div style=\"font-size:1.1rem;opacity:0.9\">$14.40-360/month</div><div style=\"font-size:0.85rem;margin-top:8px;font-style:italic\">*Scales with screenshot frequency & AI usage</div></div></div><div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:15px\"><div style=\"background:rgba(255,255,255,0.15);padding:15px;border-radius:10px;border-left:4px solid #ff6b6b\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\"><span style=\"background:#ff6b6b;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem\">🧠</span>Bedrock Nova</div><div style=\"font-size:1.2rem;font-weight:700\">~$0.01-0.40/hr</div><div style=\"font-size:0.8rem;opacity:0.9\">Image analysis & comparison</div></div><div style=\"background:rgba(255,255,255,0.15);padding:15px;border-radius:10px;border-left:4px solid #4ecdc4\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\"><span style=\"background:#4ecdc4;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem\">🎭</span>Playwright Lambda</div><div style=\"font-size:1.2rem;font-weight:700\">~$0.005-0.08/hr</div><div style=\"font-size:0.8rem;opacity:0.9\">2GB memory, web scraping</div></div><div style=\"background:rgba(255,255,255,0.15);padding:15px;border-radius:10px;border-left:4px solid #45b7d1\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\"><span style=\"background:#45b7d1;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem\">λ</span>Other Lambda</div><div style=\"font-size:1.2rem;font-weight:700\">~$0.001/hr</div><div style=\"font-size:0.8rem;opacity:0.9\">Chat & polling functions</div></div><div style=\"background:rgba(255,255,255,0.15);padding:15px;border-radius:10px;border-left:4px solid #96ceb4\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\"><span style=\"background:#96ceb4;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem\">📊</span>Storage & API</div><div style=\"font-size:1.2rem;font-weight:700\">~$0.003/hr</div><div style=\"font-size:0.8rem;opacity:0.9\">S3, DynamoDB, SNS, API Gateway</div></div></div><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px;margin-top:20px\"><div style=\"font-weight:600;margin-bottom:10px;font-size:1rem\">📊 Usage Scenarios</div><div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;font-size:0.85rem\"><div><strong>Light Use:</strong><br>~$0.02/hr<br>Few screenshots/day</div><div><strong>Regular Monitoring:</strong><br>~$0.10/hr<br>Hourly checks</div><div><strong>Heavy Analysis:</strong><br>~$0.50/hr<br>Complex AI comparisons</div></div></div><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px;margin-top:15px\"><div style=\"font-weight:600;margin-bottom:8px;font-size:0.95rem\">💡 Cost Optimization Tips</div><div style=\"font-size:0.8rem;line-height:1.4\">• <strong>Screenshot frequency</strong> - Main cost driver<br>• <strong>Bedrock tokens</strong> - Optimize prompt length<br>• <strong>Lambda memory</strong> - Right-size for your needs<br>• <strong>S3 lifecycle policies</strong> - Archive old screenshots<br>• <strong>Monitoring frequency</strong> - Balance cost vs detection speed</div></div><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px;margin-top:15px\"><div style=\"font-weight:600;margin-bottom:8px;font-size:0.95rem\">⚠️ Key Considerations</div><div style=\"font-size:0.8rem;line-height:1.4\">• Playwright Lambda uses <strong>2GB memory</strong> ($0.0000333334/GB-second)<br>• Bedrock Nova Pro: <strong>$0.0008/1K input tokens, $0.0032/1K output tokens</strong><br>• S3 storage: ~$0.023/GB-month for screenshots<br>• SNS email notifications: $0.50 per million emails</div></div><div style=\"text-align:center;margin-top:15px;font-size:0.85rem;opacity:0.8\">🌐 Web Scraping • 📸 Screenshots • 🔍 AI Analysis • 📧 Notifications</div></div>",
+    "requiredModels":["amazon.nova-pro-v1:0"],
+    "templates": [
+        {
+            "name":"template.yaml",
+            "inputs":[],
+            "outputs": []
+        }
+    ]
+}

@@ -1,0 +1,36 @@
+{
+    "title": "Basic Gen AI Chatbot",
+    "description": "Plug-and-play GenAI full-stack chatbot application",
+    "fulldescription": "Your frontend web application has been created and hosted on Simple Storage Service (S3). This application communites with a Lambda function via API Gateway, which handles the sending and recieivng of messages with the Large Language Model on Amazon Bedrock.",
+    "icon": "leapai_chat.png",
+    "videoUrl": "Proto1.mp4",
+    "services": [
+        {
+            "name":"S3",
+            "desc":""
+        },
+        {
+            "name": "API Gateway",
+            "desc": ""
+        },{
+            "name": "Lambda",
+            "desc": ""
+        },{
+            "name": "Bedrock",
+            "desc": ""
+        }
+    ],
+    "nextStepsHTML":"<ul class=\"todo-list\"> <li> <details> <summary> <input type=\"checkbox\"> Modify the system prompt<\/summary> <p style=\"padding:15px\">1. Click on 'Lambda'<br>2. Find the comment '#SystemPrompt' and change it<br>3. Click 'Deploy changes'<br>4. Try a message and notice the difference in response<\/p><\/details><\/li> <li> <details > <summary> <input type=\"checkbox\"> View\/copy the request code (with API Key)<\/summary> <p style=\"padding:15px\">1. Click on 'S3'<br>2. Locate the frontend file 'Index.html'<br>3. Download the file and open in any code editor<\/p><\/details> <\/li> <li> <input type=\"checkbox\"> <a class=\"download-q-ready-btn\" href=\"#\">Edit live with Amazon Q CLI<\/a> <\/li> <\/ul>",
+    "estimatedCost": "$0.00056/hr",
+    "estimatedTimeString": "Setup time: 1 minute",
+    "costDetailsHTML": "<div style=\"max-width:600px;margin:20px auto;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);border-radius:15px;padding:25px;color:white;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.2)\"><div style=\"text-align:center;margin-bottom:20px\"><h3 style=\"margin:0 0 10px 0;font-size:1.8rem;font-weight:700\">AWS Bedrock Chat Stack</h3><div style=\"background:rgba(255,255,255,0.2);padding:15px;border-radius:10px\"><div style=\"font-size:2.2rem;font-weight:900;margin:0\">$0.003-0.005/hr</div><div style=\"font-size:1.1rem;opacity:0.9\">$2.16-3.60/month</div><div style=\"font-size:0.85rem;margin-top:8px;font-style:italic\">*Excludes AI token costs</div></div></div><div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:15px\"><div style=\"background:rgba(255,255,255,0.15);padding:15px;border-radius:10px;border-left:4px solid #ff6b6b\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\"><span style=\"background:#ff6b6b;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem\">λ</span>Lambda</div><div style=\"font-size:1.2rem;font-weight:700\">~$0.000002/hr</div><div style=\"font-size:0.8rem;opacity:0.9\">128MB, minimal unless high volume</div></div><div style=\"background:rgba(255,255,255,0.15);padding:15px;border-radius:10px;border-left:4px solid #4ecdc4\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\"><span style=\"background:#4ecdc4;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem\">🌐</span>API Gateway</div><div style=\"font-size:1.2rem;font-weight:700\">~$0.0035/hr</div><div style=\"font-size:0.8rem;opacity:0.9\">$3.50 per million calls</div></div><div style=\"background:rgba(255,255,255,0.15);padding:15px;border-radius:10px;border-left:4px solid #45b7d1\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\"><span style=\"background:#45b7d1;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem\">📊</span>DynamoDB</div><div style=\"font-size:1.2rem;font-weight:700\">~$0.0003/hr</div><div style=\"font-size:0.8rem;opacity:0.9\">On-demand, 50% price reduction</div></div><div style=\"background:rgba(255,255,255,0.15);padding:15px;border-radius:10px;border-left:4px solid #96ceb4\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\"><span style=\"background:#96ceb4;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem\">📦</span>S3 + Logs</div><div style=\"font-size:1.2rem;font-weight:700\">~$0.005/hr</div><div style=\"font-size:0.8rem;opacity:0.9\">Storage + CloudWatch logging</div></div></div><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px;margin-top:20px;text-align:center\"><div style=\"display:flex;justify-content:space-around;flex-wrap:wrap;gap:15px\"><div><div style=\"font-weight:600;font-size:0.9rem\">Development</div><div style=\"font-size:1.1rem;font-weight:700\">$2.16/mo</div></div><div><div style=\"font-weight:600;font-size:0.9rem\">Production</div><div style=\"font-size:1.1rem;font-weight:700\">$3.60/mo</div></div><div><div style=\"font-weight:600;font-size:0.9rem\">Free Tier</div><div style=\"font-size:1.1rem;font-weight:700\">~$0/mo</div></div></div></div><div style=\"text-align:center;margin-top:15px;font-size:0.85rem;opacity:0.8\">✅ Serverless • ✅ Pay-per-use • ✅ Scales to zero</div></div>",
+    
+    "estimatedSetupTime":100,
+    "templates": [
+        {
+            "name":"template.yaml",
+            "inputs":[],
+            "outputs": []
+        }
+    ]
+}

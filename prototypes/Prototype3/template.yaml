@@ -1,0 +1,2166 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Complete CloudFormation template for Lambda function with automatic Playwright Layer creation'
+
+Resources:
+
+  # DynamoDB Table for Chat Logs
+  ChatLogTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Join
+        - "-"
+        - - "bedrock-chat-logs"
+          - !Select
+            - 0
+            - !Split
+              - "-"
+              - !Select
+                - 2
+                - !Split
+                  - "/"
+                  - !Ref "AWS::StackId"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+   # Lambda Function for Chat
+  LambdaExecutionRole1:
+    Type: AWS::IAM::Role
+    DependsOn:
+      - ScreenshotBucket
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: !GetAtt ChatLogTable.Arn
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeTable
+                  - dynamodb:CreateTable
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:GetItem
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - sns:CreateTopic
+                  - sns:Subscribe
+                  - sns:Publish
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                Resource: 
+                  - !Sub '${ScreenshotBucket.Arn}/*'
+
+  ChatFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Environment:
+        Variables:
+          SNS_TOPIC_NAME: !Sub '${AWS::StackName}-notifications'
+          DYNAMODB_TABLE_NAME: !Sub '${AWS::StackName}-results'
+          DYNAMODB_LOGS_TABLE_NAME: !Ref ChatLogTable
+      FunctionName: !Join
+      - "-"
+      - - "bedrock-chat"
+        - !Select
+          - 0
+          - !Split
+            - "-"
+            - !Select
+              - 2
+              - !Split
+                - "/"
+                - !Ref "AWS::StackId"
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole1.Arn
+      Code:
+        ZipFile: |
+            import json
+            import boto3
+            import uuid
+            import os
+            import time
+            from datetime import datetime
+            from botocore.exceptions import ClientError
+
+            sns_topic_name = os.environ['SNS_TOPIC_NAME']
+            dynamodb_table_name = os.environ['DYNAMODB_TABLE_NAME']
+            dynamodb_logs_table_name = os.environ['DYNAMODB_LOGS_TABLE_NAME']
+            
+
+            client_ip = 'NA'
+
+            def log_to_dynamodb(request_id, timestamp, user_message, bot_response, latency, client_ip, status_code, error=None, bedrock_latency=None, input_tokens=None, output_tokens=None, total_tokens=None, model_id=None, model_version=None):
+              """
+              Logs chat information to DynamoDB
+              """
+              try:
+                  # Initialize DynamoDB client
+                  dynamodb = boto3.resource('dynamodb')
+                  table_name = None
+                  
+                  # Get the DynamoDB table name from environment variables
+                  import os
+                  table_name = os.environ.get('DYNAMODB_LOGS_TABLE_NAME')
+                  
+                  # Use default name if environment variable not found
+                  if not table_name:
+                      # Default table name as fallback
+                      table_name = "bedrock-chat-logs"
+                      print(f"Warning: Using default table name: {table_name}")
+                  
+                  table = dynamodb.Table(table_name)
+                  
+                  # Create the item to store
+                  item = {
+                      'id': request_id,
+                      'timestamp': timestamp,
+                      'user_message': user_message[:1000] if user_message else "",  # Truncate if too long
+                      'bot_response': bot_response[:1000] if bot_response else "",  # Truncate if too long
+                      'latency_ms': int(latency * 1000),  # Convert to milliseconds
+                      'client_ip': client_ip,
+                      'status_code': status_code,
+                      'date': datetime.fromtimestamp(timestamp/1000).strftime('%Y-%m-%d'),
+                  }
+                  
+                  # Add optional fields if they exist
+                  if error:
+                      item['error'] = error[:1000]  # Truncate if too long
+                  
+                  if bedrock_latency is not None:
+                      item['bedrock_latency_ms'] = int(bedrock_latency * 1000)  # Convert to milliseconds
+                  
+                  # Add token usage information if available
+                  if input_tokens is not None:
+                      item['input_tokens'] = input_tokens
+                  
+                  if output_tokens is not None:
+                      item['output_tokens'] = output_tokens
+                      
+                  if total_tokens is not None:
+                      item['total_tokens'] = total_tokens
+                      
+                  # Add model information if available
+                  if model_id is not None:
+                      item['model_id'] = model_id
+                      
+                  if model_version is not None:
+                      item['model_version'] = model_version
+                  
+                  # Store in DynamoDB
+                  table.put_item(Item=item)
+                  print(f"Logged to DynamoDB: {request_id}")
+                  
+              except Exception as e:
+                  print(f"Error logging to DynamoDB: {str(e)}")
+                  # Don't re-raise the exception to avoid breaking the main function
+
+            def create_table_if_not_exists():
+                dynamodb = boto3.client('dynamodb')
+                
+                # First check if table exists
+                try:
+                    dynamodb.describe_table(TableName=dynamodb_table_name)
+                    print("Table  already exists")
+                    return
+                except ClientError as e:
+                    if e.response['Error']['Code'] == 'ResourceNotFoundException':
+                        # Table doesn't exist, so create it
+                        try:
+                            response = dynamodb.create_table(
+                                TableName=dynamodb_table_name,
+                                KeySchema=[
+                                    {
+                                        'AttributeName': 'request_id',
+                                        'KeyType': 'HASH'  # Partition key
+                                    }
+                                ],
+                                AttributeDefinitions=[
+                                    {
+                                        'AttributeName': 'request_id',
+                                        'AttributeType': 'S'  # String
+                                    }
+                                ],
+                                BillingMode='PAY_PER_REQUEST'  # On-demand capacity
+                            )
+                            print("Table "+dynamodb_table_name+" created successfully")
+                            
+                            # Wait for table to be created
+                            waiter = dynamodb.get_waiter('table_exists')
+                            waiter.wait(TableName=dynamodb_table_name)
+                            
+                        except Exception as create_error:
+                            print(f"Error creating table: {str(create_error)}")
+                    else:
+                        print(f"Error checking table existence: {str(e)}")
+
+            def get_image_bytes(bucket, key):
+                """Get raw image bytes from S3"""
+                try:
+                    s3 = boto3.client('s3')
+                    response = s3.get_object(Bucket=bucket, Key=key)
+                    image_content = response['Body'].read()
+                    
+                    # Print debug info about the data
+                    print(f"Content-Type from S3: {response.get('ContentType')}")
+                    print(f"Data type of image_content: {type(image_content)}")
+                    print(f"Size of image content: {len(image_content)} bytes")
+                    
+                    return image_content, response.get('ContentType', 'image/png')
+                except Exception as e:
+                    print(f"Error reading image from S3: {str(e)}")
+                    raise
+
+            def check_website_updates(bedrock,bucket,image1,image2,prompt):
+
+                image_bytes, content_type = get_image_bytes(bucket, image1)
+                image_bytes2, content_type2 = get_image_bytes(bucket, image2)
+                    
+                # Get format from content type
+                image_format = content_type.split('/')[-1]
+                if image_format == 'jpg':
+                    image_format = 'jpeg'
+
+                image_format2 = content_type2.split('/')[-1]
+                if image_format2 == 'jpg':
+                    image_format2 = 'jpeg'
+                
+                #prompt="System Instructions: Two images of the same web page will be provided, you should analyze them to determine if the difference being checked is there. You will recieve a prompt like 'Tell me if there is a change in [THE SUBJECT OF INTEREST]', which you should expand to follow the following structure: Please conduct a detailed comparison of the [THE SUBJECT OF INTEREST] in the two provided images. Ensure that you examine every section, item, and element within the menus, and identify any differences, no matter how small. Provide a comprehensive list of [THE SUBJECT OF INTEREST] in both images, and clearly state any discrepancies or additions between them. Your analysis should be factual and based solely on the visual content of the images, without any prior knowledge or assumptions about the differences. If [THE SUBJECT OB INTEREST] specifies specific things to look for like for example:”posts about teeth” then make sure in your analysis that you take into account those details in the subject (in this example, 'Posts about TEETH' and not just any different posts. Unless explicitly stated otherwise, ignore changes to layout and positioning of items. First, tell me the details of the specific area of interest of each image seperately, even if you think they are identical I want you to provide two seperate lists. Second, tell me the differences between them. Is there a specific and clear difference in [THE SUBJECT OF INTEREST] keeping in mind any specific details in the description of [THE SUBJECT OF INTEREST]? \n\nUser Query: " + prompt
+                prompt = "System Instructions: Please conduct a detailed comparison of the [THE SUBJECT OF INTEREST] in the two provided images. Ensure that you examine every section, item, and element within the menus, and identify any differences, no matter how small. Provide a comprehensive list of [THE SUBJECT OF INTEREST] in both images, and clearly state any discrepancies or additions between them. Your analysis should be factual and based solely on the visual content of the images, without any prior knowledge or assumptions about the differences. If [THE SUBJECT OF INTEREST] specifies specific things to look for like for example:”posts about teeth” then make sure in your analysis that you take into account those details in the subject (in this example, “Posts about TEETH” and not just any different posts). Unless explicitly stated otherwise, ignore changes to layout and positioning of items. First, tell me the details of the specific area of interest of each image separately, even if you think they are identical I want you to provide two separate lists. Second, tell me the differences between them.  \n\nUser Query: " + prompt
+                print("prompt: "+prompt)
+                # Tell me if there is a change in new posts
+                # Prepare the messages for Nova
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "image": {
+                                    "format": image_format,
+                                    "source": {
+                                        "bytes": image_bytes
+                                    }
+                                }
+                            },
+                            {
+                                "image": {
+                                    "format": image_format2,
+                                    "source": {
+                                        "bytes": image_bytes2
+                                    }
+                                }
+                            },
+                            {
+                                "text": prompt
+                            }
+                        ]
+                    }
+                ]
+
+                message2={
+                        "role": "user",
+                        "content": [
+                            {
+                                "text": "Answer with only one word 'yes' or 'no'"
+                            }
+                        ]
+                    }
+                
+                start_time = time.time()
+                request_id = str(uuid.uuid4())
+                timestamp = int(datetime.now().timestamp() * 1000)
+                bedrock_start_time = time.time()
+
+                model_id = "amazon.nova-pro-v1:0"
+                
+
+                # Call Nova using Converse API
+                response = bedrock.converse(
+                    modelId=model_id,
+                    messages=messages,
+                    inferenceConfig={
+                    "temperature": 1,
+                    "maxTokens": 5120
+                    }
+                )
+
+                print(json.dumps(response, indent=2, default=str))
+
+                bedrock_latency = time.time() - bedrock_start_time
+
+                input_tokens = response.get("usage", {}).get("inputTokens", 0)
+                output_tokens = response.get("usage", {}).get("outputTokens", 0)
+                total_tokens = input_tokens + output_tokens
+                
+                reasoning = response['output']['message']['content'][0]['text']
+                messages.append(response['output']['message'])
+                messages.append(message2)
+                
+                # Calculate total latency
+                total_latency = time.time() - start_time
+
+                bot_response = response['output']['message']['content'][0]['text']
+                
+                # Log successful request to DynamoDB
+                log_to_dynamodb(
+                    request_id=request_id,
+                    timestamp=timestamp,
+                    user_message=prompt,
+                    bot_response=bot_response,
+                    latency=total_latency,
+                    bedrock_latency=bedrock_latency,
+                    client_ip=client_ip,
+                    status_code=200,
+                    error=None,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=total_tokens,
+                    model_id=model_id
+                )
+
+                
+                start_time = time.time()
+                request_id = str(uuid.uuid4())
+                timestamp = int(datetime.now().timestamp() * 1000)
+                bedrock_start_time = time.time()
+
+
+                response = bedrock.converse(
+                    modelId=model_id,
+                    messages=messages,
+                    inferenceConfig={
+                    "temperature": 1,
+                    "maxTokens": 4048
+                    }
+                )
+                
+                # Debug print the response structure
+                print("API Response structure:")
+                print(response['output']['message']['content'][0]['text'])
+                #print(json.dumps(response, indent=2, default=str))
+
+                bedrock_latency = time.time() - bedrock_start_time
+
+                input_tokens = response.get("usage", {}).get("inputTokens", 0)
+                output_tokens = response.get("usage", {}).get("outputTokens", 0)
+                total_tokens = input_tokens + output_tokens
+
+                # Calculate total latency
+                total_latency = time.time() - start_time
+
+                bot_response = response['output']['message']['content'][0]['text']
+                
+                # Log successful request to DynamoDB
+                log_to_dynamodb(
+                    request_id=request_id,
+                    timestamp=timestamp,
+                    user_message=prompt,
+                    bot_response=bot_response,
+                    latency=total_latency,
+                    bedrock_latency=bedrock_latency,
+                    client_ip=client_ip,
+                    status_code=200,
+                    error=None,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=total_tokens,
+                    model_id=model_id
+                )
+
+
+                change=False
+                # make text lowercase and then check if text contains the word 'Yes'
+                if 'yes' in response['output']['message']['content'][0]['text'].lower():
+                    print("Change detected")
+                    change = True
+
+                full_result = {
+                    'change': change,
+                    'changeresponse':response['output']['message']['content'][0]['text'],
+                    'reasoning': reasoning
+                }
+
+                return full_result
+
+            def lambda_handler(event, context):
+                try:
+                    # Parse the incoming message from the request body
+                    body = event.get('body', '{}')
+                    if isinstance(body, str):
+                        body = json.loads(body)
+
+                    bucket = body.get('bucket', '')
+                    key = body.get('key', '')
+                    key2 = body.get('key2', '')
+                    prompt = body.get('prompt','Tell me when there is a new update');
+                    update = body.get('update',False);
+                    uid = body.get('uid','');
+                    count = body.get('count',0);
+                    email = body.get('email',None);
+
+                    
+                    client_ip = event.get('requestContext', {}).get('identity', {}).get('sourceIp', 'unknown')
+                    
+                    # Create Bedrock Runtime client
+                    bedrock = boto3.client('bedrock-runtime', region_name='us-east-1')
+                    dynamodb = boto3.client('dynamodb')
+                    sns = boto3.client('sns')
+
+                    #if True: #update:
+                    if update:
+                        
+                        #request_id = str(uuid.uuid4())
+                        request_id = uid
+
+                        create_table_if_not_exists()
+                        dynamodb.put_item(
+                            TableName=dynamodb_table_name,
+                            Item={
+                                'request_id': {'S': request_id},
+                                'status': {'S': 'PROCESSING'},
+                                'result': {'S': ''}
+                            }
+                        )
+
+                        
+                        if count == 0:
+                        #result = check_website_updates(bedrock,event['bucket'],event['key'],event['key2'])
+
+                            if email is not None:
+                                # Create an SNS topic (or get existing one)
+                                topic = sns.create_topic(Name=sns_topic_name)
+                                topic_arn = topic['TopicArn']
+                                
+                                # Subscribe the email to the topic
+                                sns.subscribe(
+                                    TopicArn=topic_arn,
+                                    Protocol='email',
+                                    Endpoint=email
+                                )
+                        #result = check_website_updates(bedrock,event['bucket'],event['key'],event['key2'],event['prompt'])
+
+                        result = check_website_updates(bedrock,bucket,key,key2,prompt)
+                        
+                        # Store result in DynamoDB
+                        dynamodb.update_item(
+                            TableName=dynamodb_table_name,
+                            Key={'request_id': {'S': request_id}},
+                            UpdateExpression='SET #status = :status, #result = :result',
+                            ExpressionAttributeNames={
+                                '#status': 'status',
+                                '#result': 'result'
+                            },
+                            ExpressionAttributeValues={
+                                ':status': {'S': 'COMPLETED'},
+                                ':result': {'S':json.dumps(result)}
+                            }
+                        )
+                        
+                        # Publish notification
+                        if result['change']:
+                                
+                            if email is not None:
+                                sns.publish(
+                                    TopicArn=topic_arn,
+                                    Message=f'The change in the website has been found: '+result['reasoning'],
+                                    Subject='Website monitor triggered!'
+                                )
+
+                        return {
+                        'statusCode': 200,
+                        'headers': {
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Headers': 'Content-Type',
+                        'Access-Control-Allow-Methods': 'OPTIONS,POST'
+                        },
+                        'body': json.dumps({'result':result})
+                        }
+                    
+                    if False: #not key:
+                        return {
+                        'statusCode': 400,
+                        'headers': {
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Headers': 'Content-Type',
+                        'Access-Control-Allow-Methods': 'OPTIONS,POST'
+                        },
+                        'body': json.dumps({'error': 'No file provided'})
+                        }
+                    #print("Loaded "+user_message)
+                    
+                    # Get image bytes and content type
+                    image_bytes, content_type = get_image_bytes(bucket, key)
+                    
+                    # Get format from content type
+                    image_format = content_type.split('/')[-1]
+                    if image_format == 'jpg':
+                        image_format = 'jpeg'
+                    
+                    
+
+                    
+                    # Print debug information
+                    print(f"Image format: {image_format}")
+                    print(f"Content type: {content_type}")
+                    
+                    # Prepare the messages for Nova
+                    messages = [
+                    {
+                    "role": "user",
+                    "content": [
+                    {
+                        "image": {
+                        "format": image_format,
+                        "source": {
+                        "bytes": image_bytes
+                        }
+                        }
+                    },
+                    {
+                        "text": prompt
+                    }
+                    ]
+                    }
+                    ]
+                    
+                    # Call Nova using Converse API
+                    response = bedrock.converse(
+                        modelId='amazon.nova-pro-v1:0',
+                        messages=messages,
+                        inferenceConfig={
+                        "temperature": 0.7,
+                        "maxTokens": 2048
+                        }
+                    )
+                    
+                    # Debug print the response structure
+                    print("API Response structure:")
+                    print(json.dumps(response, indent=2, default=str))
+                    
+                    # Extract the response text according to the documented structure
+                    description = response['output']['message']['content'][0]['text']
+                    
+                    # Extract additional metrics for debugging
+                    stop_reason = response.get('stopReason', 'unknown')
+                    usage = response.get('usage', {})
+                    metrics = response.get('metrics', {})
+                    
+                    # Return response with CORS headers
+                    return {
+                        'statusCode': 200,
+                        'headers': {
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Headers': 'Content-Type',
+                        'Access-Control-Allow-Methods': 'OPTIONS,POST'
+                        },
+                        'body': json.dumps({'result':description})
+                    }
+                
+                except Exception as e:
+                    # Store result in DynamoDB
+                    dynamodb.update_item(
+                        TableName=dynamodb_table_name,
+                        Key={'request_id': {'S': request_id}},
+                        UpdateExpression='SET #status = :status, #result = :result',
+                        ExpressionAttributeNames={
+                            '#status': 'status',
+                            '#result': 'result'
+                        },
+                        ExpressionAttributeValues={
+                            ':status': {'S': 'ERROR'},
+                            ':result': {'S':{json.dumps({'error': str(e)})}}
+                        }
+                    )
+
+                    return {
+                    'statusCode': 500,
+                    'headers': {
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Headers': 'Content-Type',
+                    'Access-Control-Allow-Methods': 'OPTIONS,POST'
+                    },
+                    'body': json.dumps({'error': str(e)})
+                    }
+
+
+      Runtime: python3.9
+      Timeout: 300
+      MemorySize: 128
+
+  # API Gateway
+  ChatAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: bedrock-chat-api
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  ChatResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt ChatAPI.RootResourceId
+      PathPart: chat
+      RestApiId: !Ref ChatAPI
+
+  ChatMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !Ref ChatResource
+      RestApiId: !Ref ChatAPI
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ChatFunction.Arn}/invocations
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  OptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      ResourceId: !Ref ChatResource
+      RestApiId: !Ref ChatAPI
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ChatMethod
+      - OptionsMethod
+    Properties:
+      RestApiId: !Ref ChatAPI
+
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      DeploymentId: !Ref ApiDeployment
+      RestApiId: !Ref ChatAPI
+      StageName: prod
+
+  # Lambda Permission for API Gateway
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ChatFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ChatAPI}/*/*/*
+
+
+  #POLL Function
+
+  PollFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Sub '${AWS::StackName}-results'
+      FunctionName: poll-function
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole1.Arn
+      Code:
+        ZipFile: |
+            import json
+            import boto3
+            import os
+
+            dynamodb_table_name = os.environ['DYNAMODB_TABLE_NAME']
+
+            def lambda_handler(event, context):
+            
+                dynamodb = boto3.client('dynamodb')
+                
+                # Get request ID from query parameters
+                
+                # Get request_id from a GET parameter
+                if 'request_id' in event['queryStringParameters']:
+                    request_id = event['queryStringParameters']['request_id']
+                # add else condition
+                else:
+                    request_id = event['request_id']
+                    
+                # Get item from DynamoDB
+                response = dynamodb.get_item(
+                    TableName=dynamodb_table_name,
+                    Key={'request_id': {'S': request_id}}
+                )
+
+                print('response: '+json.dumps(response))
+                
+                return {
+                    'statusCode': 200,
+                    'headers': {
+                        'Access-Control-Allow-Origin': '*'
+                    },
+                    'body': json.dumps(response['Item'])
+                }
+
+
+      Runtime: python3.9
+      Timeout: 300
+      MemorySize: 128
+
+
+  # API Gateway
+  PollAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: poll-api
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  PollResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt PollAPI.RootResourceId
+      PathPart: check-monitor-status
+      RestApiId: !Ref PollAPI
+
+  PollMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !Ref PollResource
+      RestApiId: !Ref PollAPI
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PollFunction.Arn}/invocations
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  PollGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: GET
+      ResourceId: !Ref PollResource
+      RestApiId: !Ref PollAPI
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PollFunction.Arn}/invocations
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  OptionsMethod2:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      ResourceId: !Ref PollResource
+      RestApiId: !Ref PollAPI
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"  # GET is already included here
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  ApiDeployment2:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - PollMethod
+      - OptionsMethod2
+      - PollGetMethod
+    Properties:
+      RestApiId: !Ref PollAPI
+
+  ApiStage2:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      DeploymentId: !Ref ApiDeployment2
+      RestApiId: !Ref PollAPI
+      StageName: prod
+
+  # Lambda Permission for API Gateway
+  LambdaPermission2:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref PollFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PollAPI}/*/*/*
+      
+
+
+  #SECURED s3
+  # S3 Bucket Cleanup Function
+
+  S3CleanupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3CleanupPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:DeleteObject
+                  - s3:DeleteObjectVersion
+                  - s3:GetObjectVersion
+                  - s3:ListBucketVersions
+                Resource: 
+                  - !Sub 'arn:aws:s3:::${PrivateS3Bucket}'
+                  - !Sub 'arn:aws:s3:::${PrivateS3Bucket}/*'
+                  - !Sub 'arn:aws:s3:::${ArtifactsBucket}'
+                  - !Sub 'arn:aws:s3:::${ArtifactsBucket}/*'
+                  - !Sub 'arn:aws:s3:::${ScreenshotBucket}'
+                  - !Sub 'arn:aws:s3:::${ScreenshotBucket}/*'
+
+  S3CleanupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt S3CleanupRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import logging
+          import time
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def delete_bucket_contents(bucket_name):
+              try:
+                  logger.info(f"Starting cleanup of bucket: {bucket_name}")
+                  s3 = boto3.client('s3')
+                  
+                  # Delete all object versions
+                  paginator = s3.get_paginator('list_object_versions')
+                  pages = paginator.paginate(Bucket=bucket_name)
+                  
+                  delete_list = []
+                  
+                  try:
+                      for page in pages:
+                          # Handle versions
+                          if 'Versions' in page:
+                              for version in page['Versions']:
+                                  delete_list.append({
+                                      'Key': version['Key'],
+                                      'VersionId': version['VersionId']
+                                  })
+                          
+                          # Handle delete markers
+                          if 'DeleteMarkers' in page:
+                              for marker in page['DeleteMarkers']:
+                                  delete_list.append({
+                                      'Key': marker['Key'],
+                                      'VersionId': marker['VersionId']
+                                  })
+                          
+                          if delete_list:
+                              logger.info(f"Deleting {len(delete_list)} objects")
+                              s3.delete_objects(
+                                  Bucket=bucket_name,
+                                  Delete={'Objects': delete_list}
+                              )
+                              delete_list = []
+                      
+                      # Final check for non-versioned objects
+                      paginator = s3.get_paginator('list_objects_v2')
+                      pages = paginator.paginate(Bucket=bucket_name)
+                      
+                      for page in pages:
+                          if 'Contents' in page:
+                              objects = [{'Key': obj['Key']} for obj in page['Contents']]
+                              if objects:
+                                  logger.info(f"Deleting {len(objects)} non-versioned objects")
+                                  s3.delete_objects(
+                                      Bucket=bucket_name,
+                                      Delete={'Objects': objects}
+                                  )
+                      
+                      logger.info(f"Successfully cleaned up bucket: {bucket_name}")
+                      return True
+                      
+                  except Exception as e:
+                      logger.error(f"Error during deletion: {str(e)}")
+                      return False
+                      
+              except Exception as e:
+                  logger.error(f"Error accessing bucket: {str(e)}")
+                  return False
+
+          def handler(event, context):
+              logger.info('Received event: %s', event)
+              response_data = {}
+              
+              try:
+                  bucket_name = event['ResourceProperties']['BucketName']
+                  
+                  if event['RequestType'] == 'Delete':
+                      # Attempt cleanup multiple times
+                      max_attempts = 3
+                      for attempt in range(max_attempts):
+                          logger.info(f"Cleanup attempt {attempt + 1} of {max_attempts}")
+                          if delete_bucket_contents(bucket_name):
+                              break
+                          if attempt < max_attempts - 1:
+                              time.sleep(5)  # Wait before retry
+                  
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                  
+              except Exception as e:
+                  logger.error(f"Error in handler: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, response_data)
+
+      Runtime: python3.9
+      Timeout: 300  # Increased timeout to 5 minutes
+      MemorySize: 256  # Increased memory
+
+  PrivateS3Bucket:
+    Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketName: !Join
+      - "-"
+      - - "bedrock-chat"
+        - !Select
+          - 0
+          - !Split
+            - "-"
+            - !Select
+              - 2
+              - !Split
+                - "/"
+                - !Ref "AWS::StackId"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'AES256'
+      VersioningConfiguration:
+        Status: Enabled
+
+  BucketCleanupResource:
+    Type: Custom::S3Cleanup
+    DependsOn: PrivateS3Bucket
+    Properties:
+      ServiceToken: !GetAtt S3CleanupFunction.Arn
+      BucketName: !Ref PrivateS3Bucket
+
+  BucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref PrivateS3Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyUnsecuredTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource: 
+              - !Sub '${PrivateS3Bucket.Arn}/*'
+              - !GetAtt PrivateS3Bucket.Arn
+            Condition:
+              Bool:
+                'aws:SecureTransport': false
+
+  S3UploaderRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3UploadAndSignPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub '${PrivateS3Bucket.Arn}/*'
+
+  S3UploaderFunction:
+    Type: 'AWS::Lambda::Function'
+    DependsOn:
+      - ChatAPI
+      - ApiStage
+      - PlaywrightApi
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt S3UploaderRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          
+          def handler(event, context):
+              if event['RequestType'] in ['Create', 'Update']:
+                  try:
+                      s3 = boto3.client('s3')
+                      bucket_name = event['ResourceProperties']['BucketName']
+                      api_gateway = event['ResourceProperties']['ApiGateway']
+                      poll_api_gateway = event['ResourceProperties']['PollApiGateway']
+                      website_api_gateway = event['ResourceProperties']['WebsiteApiGateway']
+                      aws_region = event['ResourceProperties']['AWSReg']
+                      
+                      # HTML content
+                      html_content = """
+                        <!DOCTYPE html>
+                        <html>
+                        <head>
+                            <title>Chat with web page</title>
+                            <style>
+                                body { 
+                                    font-family: Arial, sans-serif; 
+                                    max-width: 800px; 
+                                    margin: 0 auto; 
+                                    padding: 20px;
+                                    background-color: #f5f5f5;
+                                }
+                                #chat-container,#chat-container2  { 
+                                    height: 450px; 
+                                    overflow-y: auto; 
+                                    border: 1px solid #ddd; 
+                                    padding: 20px;
+                                    background-color: white;
+                                    border-radius: 8px;
+                                    margin-bottom: 20px;
+                                }
+                                #input-container { 
+                                    display: flex; 
+                                    gap: 10px;
+                                    margin-bottom: 20px;
+                                }
+                                #message-input { 
+                                    flex-grow: 1; 
+                                    padding: 10px;
+                                    border: 1px solid #ddd;
+                                    border-radius: 4px;
+                                    font-size: 16px;
+                                }
+                                button {
+                                    padding: 10px 20px;
+                                    background-color: #007bff;
+                                    color: white;
+                                    border: none;
+                                    border-radius: 4px;
+                                    cursor: pointer;
+                                }
+                                button:hover {
+                                    background-color: #0056b3;
+                                }
+                                .message {
+                                    margin-bottom: 15px;
+                                    padding: 10px;
+                                    border-radius: 4px;
+                                    max-width: 80%;
+                                }
+                                .user-message {
+                                    background-color: #007bff;
+                                    color: white;
+                                    margin-left: auto;
+                                }
+                                .assistant-message {
+                                    background-color: #e9ecef;
+                                    color: black;
+                                }
+                                #loading {
+                                    display: none;
+                                    text-align: center;
+                                    color: #666;
+                                    padding: 10px;
+                                }
+                                .dis {
+                            opacity:0.4;
+                            pointer-events:none;
+                            }
+
+                                 .selbox {
+                                display: flex;
+                                gap: 8px;
+                                font-size: 0.9rem;
+                                font-weight: 500;
+                                justify-content: flex-end;
+                                align-items: center;
+                                margin-top: 4px;
+                              }
+                              
+                              .selbox a {
+                                color: #6b21a8; /* purple-800 */
+                                text-decoration: none;
+                                padding: 6px 12px;
+                                border-radius: 6px;
+                                transition: background 0.2s ease;
+                              }
+                              
+                              .selbox a.selected {
+                                background-color: #ede9fe;
+                                color: #4c1d95;
+                                font-weight: 600;
+                              }
+                              
+                              .selbox a:hover {
+                                background-color: #f3e8ff;
+                              }
+
+                            </style>
+                        <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+                        </head>
+                        <body>
+                            <!-- <img id="screenshot1" src="" style="width:80px;height:auto;position:absolute;top:0px;right:0px;" />
+                            <img id="screenshot2" src="" style="width:80px;height:auto;position:absolute;bottom:0px;right:0px;" /> -->
+                            <h1>Chat with web page</h1>
+                            
+                            <div id="input-container">
+                                <input type="text" id="website-input" placeholder="Enter website" style="min-width:50%">
+                                <button onclick="setWebsite()">Connect</button>
+                                 <div style="flex:50%;text-align:right" class="selbox"><a class="selected" data-target="chatsection" href="#">Chat</a><a data-target="monitorsection" class="selbox" href="#">Monitor</a></div>
+                            </div>
+
+                            <div id="chatsection" class="sec">
+                                <div id="chat-container" class="dis"></div>
+                                <div id="loading">Assistant is typing...</div>
+                                <div id="input-container" class="dis">
+                                    <input type="text" id="message-input" placeholder="Type your message...">
+                                    <button onclick="sendMessage()">Send</button>
+                                </div>
+                            </div>
+                            <div id="monitorsection" class="sec" style="display:none">
+                                <div id="chat-container2" class="dis"></div>
+                                <div id="input-container" class="dis">
+                                    <label style="line-height: 40px;font-weight:bold">Tell me when:</label>
+                                    <input type="text" id="monitor-input" placeholder="a new post is published">
+                                    <input type="text" id="email-input" placeholder="email to notify (optional)">
+                                    <button id="startmbut" onclick="setMonitor()">Start monitoring</button>
+                                    <button id="stopmbut" onclick="stopMonitor()" style="background:red;display:none">Stop</button>
+                                </div>
+                            
+                                <div id="status"></div>
+                            </div>
+
+                            <script>
+
+                                $(document).ready(() => {
+
+                                $(document).on('click', '.selbox a', function () {
+
+                                    $('.sec').hide();
+                                    $('#' + $(this).data('target')).show();
+
+                                    $('.selbox a').removeClass('selected');
+                                    $(this).addClass('selected');
+                                });
+
+                                });
+
+                                const apiUrl = 'AAAAA.execute-api.RRRR.amazonaws.com/prod/chat';
+                                const setwebsiteapiUrl = 'WWWWW.execute-api.RRRR.amazonaws.com/prod/';
+                                const messageInput = document.getElementById('message-input');
+                                const websiteInput = document.getElementById('website-input');
+                                const monitorInput = document.getElementById('monitor-input');
+                                const emailInput = document.getElementById('email-input');
+                                const chatContainer = document.getElementById('chat-container');
+                                const chatContainer2 = document.getElementById('chat-container2');
+                                const loadingIndicator = document.getElementById('loading');
+                                const status = document.getElementById('status');
+                                
+                                messageInput.addEventListener('keypress', function(e) {
+                                    if (e.key === 'Enter') {
+                                        sendMessage();
+                                    }
+                                });
+                                
+                                var bucket;
+                                var key;
+                                
+                                async function setWebsite() {
+                                    const message = websiteInput.value.trim();
+                                    if (!message) return;
+                            
+                                    appendMessageToChat('Connecting to '+message+'...', 'assistant');
+
+                                    
+                                    try {
+                                        const response = await fetch('https://' + setwebsiteapiUrl, {
+                                            method: 'POST',
+                                            headers: {
+                                                'Content-Type': 'application/json'
+                                            },
+                                            body: JSON.stringify({ URL: message })
+                                        });
+                                        
+                                        const data = await response.json();
+                                        //alert(data['bucket']);
+                                        bucket = data['bucket'];
+                                        key = data['key'];
+
+                                        $(chatContainer).html('');
+                                        $(chatContainer2).html('');
+
+                                        //$('#screenshot1').attr('src',data['presignedUrl']);
+                                        appendMessageToChat('Webpage loaded <img src="'+data['presignedUrl']+'" style="width:90px;height:auto"/>', 'assistant');
+                                        appendStatusUpdate('Webpage loaded <img src="'+data['presignedUrl']+'" style="width:90px;height:auto"/>', 'assistant');
+
+                                        $('.dis').removeClass('dis');
+                                        
+
+                                    } catch (error) {
+                                        console.error('Error:', error);
+                                    
+                                    }
+                                }
+
+                                var count=0;
+                                    var pollInterval = null;
+                                    var waitInterval = null;
+
+                                function stopMonitor() {
+                                    $('#startmbut').show();
+                                    $('#stopmbut').hide();
+
+                                    count=0;
+                                    if (pollInterval)
+                                        clearInterval(pollInterval);
+
+                                    pollInterval=null;
+
+                                    if (waitInterval)
+                                        clearTimeout(waitInterval);
+
+                                    waitInterval = null;
+                                    
+                                }
+
+                                async function setMonitor() {
+                                        const message = websiteInput.value.trim();
+                                        if (!message) return;
+
+                                        var prompt = monitorInput.value.trim();
+                                        if (!prompt) return;
+
+                                        prompt =  "Tell me if there is a change in  "+ prompt;
+
+                                        $('#startmbut').hide();
+                                        $('#stopmbut').show();
+
+                                        if (count==0)
+                                            appendStatusUpdate('Creating monitor...', 'assistant');
+                                        //status.textContent = 'Creating monitor...';
+
+                                        try {
+                                            const response = await fetch('https://' + setwebsiteapiUrl, {
+                                                method: 'POST',
+                                                headers: {
+                                                    'Content-Type': 'application/json'
+                                                },
+                                                body: JSON.stringify({ URL: message })
+                                            });
+
+                                            const data = await response.json();
+                                            //alert(data['bucket']);
+                                            //bucket = data['bucket'];
+                                            key2 = data['key'];
+                                            var uid = data['uid'];
+
+                                            //$('#screenshot2').attr('src', data['presignedUrl']);
+
+
+                                            try {
+                                                const response = fetch('https://' + apiUrl, {
+                                                    method: 'POST',
+                                                    headers: {
+                                                        'Content-Type': 'application/json'
+                                                    },
+                                                    body: JSON.stringify({ bucket: bucket, key: key, key2: key2,update:true,prompt:prompt, uid: uid,count:count,email:(emailInput.value && emailInput.value.length? emailInput.value.trim():null) })
+                                                });
+
+                                                /*
+                                                const data = await response.json();
+                                                loadingIndicator.style.display = 'none';
+                                                */
+
+                                                if (count == 0)
+                                                    {
+                                                        appendStatusUpdate('Monitor created.', 'assistant');
+                                                        //appendStatusUpdate('Checking for changes... <img src="'+data['presignedUrl']+'" style="width:90px;height:auto"/>', 'assistant');
+                                                        appendStatusUpdate('Checking for changes...', 'assistant');
+                                                    }
+                                                    //status.textContent = 'Monitor created. Waiting for changes...';
+                                                else
+                                                appendStatusUpdate('Checking for changes... <img src="'+data['presignedUrl']+'" style="width:90px;height:auto"/>', 'assistant');
+                                                    //status.textContent = 'Checking for changes...';
+
+
+                                                console.log('Monitoring for changes...');
+
+                                                pollInterval = setInterval(async () => {
+                                                    const statusResponse = await fetch('https://PPPPP.execute-api.RRRR.amazonaws.com/prod/check-monitor-status?request_id='+ uid);
+                                                    const data = await statusResponse.json();
+
+                                                    console.log('poll '+JSON.stringify(data));
+
+                                                    if (data.status.S === 'COMPLETED') {
+                                                    
+
+                                                        var result = JSON.parse(data.result.S);
+                                                        if (result.change)
+                                                        {
+                                                            stopMonitor();
+                                                            //alert(result.reasoning);
+                                                            appendStatusUpdate('<h3>Change detected!</h3><p>' + result.reasoning + '</p>', 'assistant');
+                                                            //$(status).html = '<h3>Change detected!</h3><p>'+ result.reasoning+'</p>';
+                                                        }
+                                                        else
+                                                        {
+                                                            if (pollInterval)
+                                                                clearInterval(pollInterval);
+
+                                                            pollInterval = null;
+
+                                                            appendStatusUpdate('No changes detected. Checking again after 1 minute...', 'assistant');
+
+                                                        // status.textContent = 'No changes detected. Checking again in 1 minute...';
+                                                            //alert('no change, checking again in 1 minute');
+
+                                                            count++;
+
+                                                            waitInterval = setTimeout(() => {
+                                                                waitInterval=null;
+                                                                setMonitor();
+                                                            }, 60000);
+                                                        }
+
+                                                        //resultElement.textContent = JSON.parse(data.result.S);
+                                                    } else if (data.status.S === 'ERROR') {
+                                                        stopMonitor();
+                                                        //resultElement.textContent = `Error: ${data.error.S}`;
+                                                    }
+
+                                                }, 3000); // Poll
+
+                                                //alert(data['result']);
+                                                //appendMessageToChat(data['result'], 'assistant');
+                                            } catch (error) {
+                                                console.error('Error:', error);
+                                                loadingIndicator.style.display = 'none';
+                                            }
+
+
+                                        } catch (error) {
+                                            console.error('Error:', error);
+
+                                        }
+                                    }
+
+                                async function sendMessage() {
+                                    const message = messageInput.value.trim();
+                                    if (!message) return;
+                                    
+                                    messageInput.value = '';
+                                    appendMessageToChat(message, 'user');
+                                    loadingIndicator.style.display = 'block';
+                                    
+                                    try {
+                                        const response = await fetch('https://' + apiUrl, {
+                                            method: 'POST',
+                                            headers: {
+                                                'Content-Type': 'application/json'
+                                            },
+                                            body: JSON.stringify({ bucket:bucket,key:key,prompt: message })
+                                        });
+                                        
+                                        const data = await response.json();
+                                        loadingIndicator.style.display = 'none';
+                                        appendMessageToChat(data['result'], 'assistant');
+                                    } catch (error) {
+                                        console.error('Error:', error);
+                                        loadingIndicator.style.display = 'none';
+                                        appendMessageToChat('Error: Failed to get response', 'assistant');
+                                    }
+                                }
+                                
+                                function appendMessageToChat(messageText, senderType) {
+                                    const messageElement = document.createElement('div');
+                                    messageElement.className = 'message ' + senderType + '-message';
+                                    $(messageElement).html(messageText);
+                                    chatContainer.appendChild(messageElement);
+                                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                                }
+
+                                function appendStatusUpdate(messageText, senderType) {
+                                        const messageElement = document.createElement('div');
+                                        messageElement.className = 'message ' + senderType + '-message';
+                                        const now = new Date();
+                                        const timestamp = `[${now.getHours()}:${now.getMinutes()}:${now.getSeconds()}] `;
+                                        messageElement.innerHTML = timestamp + ' - '+messageText;  
+                                        chatContainer2.appendChild(messageElement);
+                                    }
+                            </script>
+                        </body>
+                        </html>
+                      """
+                      
+                      html_content = html_content.replace('AAAAA', api_gateway)
+                      html_content = html_content.replace('WWWWW', website_api_gateway)
+                      html_content = html_content.replace('PPPPP', poll_api_gateway)
+                      
+                      html_content = html_content.replace('RRRR', aws_region)
+
+                      # Upload the HTML file
+                      s3.put_object(
+                          Bucket=bucket_name,
+                          Key='index.html',
+                          Body=html_content,
+                          ContentType='text/html'
+                      )
+                      
+                      # Generate presigned URL (valid for 7 days - maximum allowed)
+                      presigned_url = s3.generate_presigned_url(
+                          'get_object',
+                          Params={
+                              'Bucket': bucket_name,
+                              'Key': 'index.html'
+                          },
+                          ExpiresIn=604800  # 7 days in seconds
+                      )
+                      
+                      responseData = {
+                          'SignedURL': presigned_url
+                      }
+                      
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+                  except Exception as e:
+                      print(f"Error: {str(e)}")
+                      cfnresponse.send(event, context, cfnresponse.FAILED, {})
+              else:
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+      Runtime: python3.9
+      Timeout: 30
+
+  UploadHTMLAndGenerateURL:
+    Type: 'Custom::S3Upload'
+    Properties:
+      ServiceToken: !GetAtt S3UploaderFunction.Arn
+      BucketName: !Ref PrivateS3Bucket
+      ApiGateway: !Ref ChatAPI
+      WebsiteApiGateway: !Ref PlaywrightApi
+      PollApiGateway: !Ref PollAPI
+      AWSReg: !Ref AWS::Region
+
+
+  ####
+
+  # S3 Buckets
+  ArtifactsBucket:
+    Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketName: !Join
+      - "-"
+      - - "artifacts"
+        - !Select
+          - 0
+          - !Split
+            - "-"
+            - !Select
+              - 2
+              - !Split
+                - "/"
+                - !Ref "AWS::StackId"
+
+  ArtifactsBucketCleanupResource:
+    Type: Custom::S3Cleanup
+    DependsOn: ArtifactsBucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      ServiceToken: !GetAtt S3CleanupFunction.Arn
+      BucketName: !Ref ArtifactsBucket	  
+
+  ScreenshotBucket:
+    Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketName: !Join
+      - "-"
+      - - "screenshots"
+        - !Select
+          - 0
+          - !Split
+            - "-"
+            - !Select
+              - 2
+              - !Split
+                - "/"
+                - !Ref "AWS::StackId"
+
+  ScreenshotBucketCleanupResource:
+    Type: Custom::S3Cleanup
+    DependsOn: ArtifactsBucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      ServiceToken: !GetAtt S3CleanupFunction.Arn
+      BucketName: !Ref ScreenshotBucket
+
+  # Custom Resource for Function Code Upload
+  FunctionCodeUploaderRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource: !Sub '${ArtifactsBucket.Arn}/*'
+
+  FunctionCodeUploader:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt FunctionCodeUploaderRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import os
+          import zipfile
+          import json
+
+          def handler(event, context):
+              try:
+                  if event['RequestType'] in ['Create', 'Update']:
+                      s3 = boto3.client('s3')
+                      bucket_name = event['ResourceProperties']['DestinationBucket']
+                      
+                      # Create function code
+                      function_code = """import playwright from 'playwright-aws-lambda';
+                        import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+                        import { randomUUID } from 'crypto';
+                        import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+
+                        // Initialize S3 client
+                        const s3Client = new S3Client({ region: 'us-east-1' });
+
+                        export const handler = async (event) => {
+                        let browser = null;
+
+                        try {
+                            let targetUrl;
+                            let setmonitor=false;
+                            
+                            if (event.body) {
+                            // Handle JSON string from AJAX call
+                            try {
+                                const body = JSON.parse(event.body);
+                                targetUrl = body.URL;
+
+                                if (body.monitor)
+                                setmonitor=true;
+
+                            } catch (e) {
+                                throw new Error('Invalid JSON in request body');
+                            }
+                            } else if (event.URL) {
+                            // Handle direct JSON event (e.g., test event)
+                            targetUrl = event.URL;
+                            } else {
+                            throw new Error('No URL parameter provided');
+                            }
+
+                            // Validate URL
+                            if (!targetUrl || typeof targetUrl !== 'string') {
+                            throw new Error('Invalid or missing URL parameter');
+                            }
+
+                            browser = await playwright.launchChromium();
+                            const context = await browser.newContext({
+                            viewport: { width: 1280, height: 2024 }
+                            });
+                            const page = await context.newPage();
+                            await page.goto(targetUrl);
+
+                            const body = await page.$("body");
+                            
+                            let ti=0;
+                            let s3Url='';
+                            let bucket = '';
+                            let key = '';
+                            let presignedUrl=''
+
+                            //Set a unique 16 bit alphanumeric UID
+                            let monitorId = randomUUID();
+                            
+                            for (ti=0;ti<1;ti++) {
+                            console.log('Page title: ', await page.title());
+                            
+                            let screenshot = null;
+
+                            screenshot = await page.screenshot({
+                                encoding: 'binary',
+                            });
+
+                            console.log('Screenshot captured successfully');
+                            
+                            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                            const filename = `screenshot-${timestamp}.png`;
+                            
+                            const uploadParams = {
+                                Bucket: process.env.BUCKET_NAME,
+                                Key: filename,
+                                Body: screenshot,
+                                ContentType: 'image/png'
+                            };
+
+                            bucket = process.env.BUCKET_NAME;
+                            key=filename;
+                            
+                            console.log('Uploading to S3...');
+                            await s3Client.send(new PutObjectCommand(uploadParams));
+                            
+                            await page.evaluate(() => {
+                                window.scrollBy(0, 800);
+                            });
+
+                            s3Url = `https://${process.env.BUCKET_NAME}.s3.amazonaws.com/${filename}`;
+
+                            var expiresIn = 3600;
+                            // Create the command to get the object
+                        const command = new GetObjectCommand({
+                            Bucket: bucket,
+                            Key: key
+                        });
+
+                        // Generate the presigned URL
+                            presignedUrl = await getSignedUrl(s3Client, command, {
+                            expiresIn // URL expiration time in seconds (default: 1 hour)
+                        });
+                            
+                            // Set URL expiration time (3600 seconds = 1 hour)
+                            const expirationSeconds = 3600;
+                            
+                            // Create the command
+
+
+                            
+                            await new Promise(resolve => setTimeout(resolve, 200));
+                            }
+
+                            return {
+                            statusCode: 200,
+                            headers: {
+                                'Access-Control-Allow-Origin': '*',
+                                'Access-Control-Allow-Headers': 'Content-Type',
+                                'Access-Control-Allow-Methods': 'OPTIONS,POST'
+                            },
+                            body: JSON.stringify({
+                                message: 'Success',
+                                url: s3Url,
+                                bucket:bucket,
+                                key:key,
+                                uid:monitorId,
+                                presignedUrl:presignedUrl
+                            })
+                            };
+                            
+                        } catch (error) {
+                            throw error;
+                        } finally {
+                            if (browser) {
+                            await browser.close();
+                            }
+                        }
+                        };"""
+
+                      # Create package.json
+                      package_json = {
+                          "name": "playwright-lambda",
+                          "version": "1.0.0",
+                          "type": "module",
+                          "dependencies": {
+                              "@aws-sdk/client-s3": "^3.0.0"
+                          }
+                      }
+                      
+                      # Create deployment package
+                      zip_path = '/tmp/function.zip'
+                      with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                          # Add the function code
+                          zipf.writestr('lambdaplaywright.mjs', function_code)
+                          # Add package.json
+                          zipf.writestr('package.json', json.dumps(package_json))
+                      
+                      # Upload to S3
+                      print("Uploading zip to S3...")
+                      s3.upload_file(zip_path, bucket_name, 'function.zip')
+                      
+                      response_data = {
+                          'FunctionS3Key': 'function.zip'
+                      }
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                  
+                  elif event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  import traceback
+                  print(f"Traceback: {traceback.format_exc()}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+      Runtime: python3.9
+      Timeout: 300
+      MemorySize: 512
+
+  FunctionCodeUploaderTrigger:
+    Type: 'Custom::FunctionCodeUploader'
+    Properties:
+      ServiceToken: !GetAtt FunctionCodeUploader.Arn
+      DestinationBucket: !Ref ArtifactsBucket
+
+  LayerCreatorRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource: !Sub '${ArtifactsBucket.Arn}/*'
+
+
+  LayerCreatorFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt LayerCreatorRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import cfnresponse
+          import os
+          import subprocess
+          import shutil
+          import urllib.request
+          import tarfile
+
+          def download_and_extract_nodejs():
+              # Using Node.js 16.x which is compatible with Amazon Linux 2
+              nodejs_url = "https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.gz"
+              tar_file = "/tmp/node.tar.gz"
+              
+              print("Downloading Node.js...")
+              urllib.request.urlretrieve(nodejs_url, tar_file)
+              
+              print("Extracting Node.js...")
+              with tarfile.open(tar_file) as tar:
+                  tar.extractall("/tmp")
+              
+              # Move node and npm to a known location
+              node_dir = "/tmp/node-v16.20.2-linux-x64"
+              os.environ['PATH'] = f"{node_dir}/bin:{os.environ['PATH']}"
+              
+              # Create npm cache and tmp directories
+              npm_cache_dir = '/tmp/npm-cache'
+              npm_tmp_dir = '/tmp/npm-tmp'
+              os.makedirs(npm_cache_dir, exist_ok=True)
+              os.makedirs(npm_tmp_dir, exist_ok=True)
+              
+              return node_dir
+
+          def handler(event, context):
+              try:
+                  if event['RequestType'] in ['Create', 'Update']:
+                      print("Setting up Node.js...")
+                      node_dir = download_and_extract_nodejs()
+                      node_path = os.path.join(node_dir, 'bin', 'node')
+                      npm_path = os.path.join(node_dir, 'bin', 'npm')
+                      
+                      # Make executables
+                      os.chmod(node_path, 0o755)
+                      os.chmod(npm_path, 0o755)
+                      
+                      print("Creating working directory...")
+                      working_dir = '/tmp/nodejs'
+                      if os.path.exists(working_dir):
+                          shutil.rmtree(working_dir)
+                      os.makedirs(working_dir)
+                      
+                      print("Creating package.json...")
+                      package_json = {
+                          "dependencies": {
+                              "playwright-aws-lambda": "^0.11.0",
+                              "playwright-core": "^1.49.0"
+                          }
+                      }
+                      
+                      with open(os.path.join(working_dir, 'package.json'), 'w') as f:
+                          json.dump(package_json, f)
+                      
+                      print("Installing packages...")
+                      try:
+                          # Configure npm to use temporary directories
+                          npm_config = [
+                              f"--cache=/tmp/npm-cache",
+                              f"--tmp=/tmp/npm-tmp",
+                              "--no-bin-links",
+                              "--no-audit",
+                              "--no-fund",
+                              "--production",
+                              "--prefix=/tmp/nodejs",
+                              "--no-package-lock"
+                          ]
+                          
+                          subprocess.check_call(
+                              [npm_path, 'install'] + npm_config,
+                              cwd=working_dir,
+                              env={
+                                  **os.environ,
+                                  'NODE_ENV': 'production',
+                                  'HOME': '/tmp',
+                                  'npm_config_cache': '/tmp/npm-cache',
+                                  'npm_config_tmp': '/tmp/npm-tmp'
+                              }
+                          )
+                      except subprocess.CalledProcessError as e:
+                          print(f"npm install error: {str(e)}")
+                          raise
+                      
+                      print("Creating ZIP file...")
+                      shutil.make_archive('/tmp/layer', 'zip', '/tmp', 'nodejs')
+                      
+                      print("Uploading to S3...")
+                      s3 = boto3.client('s3')
+                      bucket_name = event['ResourceProperties']['DestinationBucket']
+                      s3.upload_file('/tmp/layer.zip', bucket_name, 'layer.zip')
+                      
+                      response_data = {
+                          'LayerZipLocation': f's3://{bucket_name}/layer.zip'
+                      }
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                  
+                  elif event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  import traceback
+                  print(f"Traceback: {traceback.format_exc()}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+      Runtime: python3.9
+      Timeout: 300
+      MemorySize: 1024
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref ArtifactsBucket
+
+
+  LayerCreatorTrigger:
+    Type: 'Custom::LayerCreator'
+    Properties:
+      ServiceToken: !GetAtt LayerCreatorFunction.Arn
+      DestinationBucket: !Ref ArtifactsBucket
+
+  PlaywrightLayer:
+    Type: 'AWS::Lambda::LayerVersion'
+    DependsOn: LayerCreatorTrigger
+    Properties:
+      LayerName: 'playwright-layer'
+      Description: 'Layer containing Playwright dependencies'
+      Content:
+        S3Bucket: !Ref ArtifactsBucket
+        S3Key: 'layer.zip'
+      CompatibleRuntimes:
+        - nodejs18.x
+      CompatibleArchitectures:
+        - x86_64
+
+  LambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                  - 's3:GetObject'
+                Resource: 
+                  - !Sub '${ScreenshotBucket.Arn}/*'
+                  - !Sub '${ArtifactsBucket.Arn}/*'
+
+
+  PlaywrightFunction:
+    Type: 'AWS::Lambda::Function'
+    DependsOn: [PlaywrightLayer, FunctionCodeUploaderTrigger]
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-playwright-function'
+      Runtime: nodejs18.x
+      RuntimeManagementConfig:
+        RuntimeVersionArn: 'arn:aws:lambda:us-east-1::runtime:0cdcfbdefbc5e7d3343f73c2e2dd3cba17d61dea0686b404502a0c9ce83931b9'
+        UpdateRuntimeOn: 'Manual'
+      Handler: lambdaplaywright.handler
+      Code:
+        S3Bucket: !Ref ArtifactsBucket
+        S3Key: 'function.zip'
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 300
+      MemorySize: 2048
+      Layers:
+        - !Ref PlaywrightLayer
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref ScreenshotBucket
+      Architectures:
+        - x86_64
+
+  # API Gateway Resources
+  PlaywrightApi:
+    Type: 'AWS::ApiGateway::RestApi'
+    Properties:
+      Name: !Sub '${AWS::StackName}-playwright-api'
+      Description: 'API Gateway for Playwright Lambda'
+
+  ApiGatewayRootMethod:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      RestApiId: !Ref PlaywrightApi
+      ResourceId: !GetAtt PlaywrightApi.RootResourceId
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PlaywrightFunction.Arn}/invocations'
+      RequestParameters:
+        method.request.header.Access-Control-Allow-Origin: true
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  ApiOptionsMethod:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      RestApiId: !Ref PlaywrightApi
+      ResourceId: !GetAtt PlaywrightApi.RootResourceId
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  ApiGatewayDeployment:
+    Type: 'AWS::ApiGateway::Deployment'
+    DependsOn: 
+      - ApiGatewayRootMethod
+      - ApiOptionsMethod
+    Properties:
+      RestApiId: !Ref PlaywrightApi
+
+  ApiGatewayStage:
+    Type: 'AWS::ApiGateway::Stage'
+    Properties:
+      RestApiId: !Ref PlaywrightApi
+      DeploymentId: !Ref ApiGatewayDeployment
+      StageName: 'prod'
+
+  LambdaApiGatewayPermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !Ref PlaywrightFunction
+      Principal: 'apigateway.amazonaws.com'
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PlaywrightApi}/*/*/*'
+
+Outputs:
+
+  DynamoDBTableName:
+    Description: 'Name of the created DynamoDB table for chat logs'
+    Value: !Ref ChatLogTable
+    
+  DynamoDBTableArn:
+    Description: 'ARN of the created DynamoDB table'
+    Value: !GetAtt ChatLogTable.Arn
+
+  FrontendURL:
+    Description: URL for the S3 static website
+    Value: !GetAtt UploadHTMLAndGenerateURL.SignedURL
+    
+  BackendURL:
+      Description: API Gateway endpoint URL
+      Value: !Sub https://${ChatAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/chat
+
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub https://${ChatAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/chat
+
+  LambdaFunctionName:
+    Description: Name of the Lambda function
+    Value: !Ref ChatFunction
+
+  LambdaFunctionARN:
+    Description: ARN of the Lambda function
+    Value: !GetAtt ChatFunction.Arn
+
+  FunctionArn:
+    Description: 'ARN of the created Lambda function'
+    Value: !GetAtt PlaywrightFunction.Arn
+  
+  BucketName:
+    Description: 'Name of the created S3 bucket for screenshots'
+    Value: !Ref ScreenshotBucket
+  
+  ArtifactsBucketName:
+    Description: 'Name of the created S3 bucket for artifacts'
+    Value: !Ref ArtifactsBucket
