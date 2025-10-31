@@ -1,0 +1,547 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'N8N Workflow Automation - Fast deployment with NLB and persistent storage (FIXED)'
+
+Resources:
+  # ============================================================================
+  # VPC AND NETWORKING
+  # ============================================================================
+  
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-vpc
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-public-subnet-1
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-public-subnet-2
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-igw
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-public-rt
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  SubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  # ============================================================================
+  # SECURITY GROUPS
+  # ============================================================================
+
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ECS tasks
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5678
+          ToPort: 5678
+          CidrIp: 0.0.0.0/0
+          Description: Allow N8N access from anywhere (NLB passes through traffic)
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-ecs-sg
+
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EFS mount targets
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref ECSSecurityGroup
+          Description: Allow NFS from ECS tasks
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-efs-sg
+
+  # ============================================================================
+  # ELASTIC FILE SYSTEM (EFS) - FIXED WITH ACCESS POINT
+  # ============================================================================
+
+  FileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-n8n-data
+
+  # EFS Access Point - Sets proper ownership for N8N user
+  EFSAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref FileSystem
+      PosixUser:
+        Uid: '1000'
+        Gid: '1000'
+      RootDirectory:
+        CreationInfo:
+          OwnerUid: '1000'
+          OwnerGid: '1000'
+          Permissions: '755'
+        Path: '/n8n-data'
+      AccessPointTags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-n8n-access-point
+
+  MountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  MountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  # ============================================================================
+  # NETWORK LOAD BALANCER
+  # ============================================================================
+
+  NetworkLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ${AWS::StackName}-nlb
+      Type: network
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-nlb
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${AWS::StackName}-tg
+      Port: 5678
+      Protocol: TCP
+      VpcId: !Ref VPC
+      TargetType: ip
+      HealthCheckEnabled: true
+      HealthCheckProtocol: TCP
+      HealthCheckPort: '5678'
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 3
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '30'
+        - Key: preserve_client_ip.enabled
+          Value: 'true'
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-tg
+
+  NetworkLoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref NetworkLoadBalancer
+      Port: 80
+      Protocol: TCP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  # ============================================================================
+  # IAM ROLES
+  # ============================================================================
+
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-ecs-execution-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-ecs-execution-role
+
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-ecs-task-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: EFSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                  - elasticfilesystem:DescribeFileSystems
+                  - elasticfilesystem:DescribeAccessPoints
+                Resource:
+                  - !GetAtt FileSystem.Arn
+                  - !Sub '${FileSystem.Arn}/*'
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-ecs-task-role
+
+  # ============================================================================
+  # CLOUDWATCH LOGS
+  # ============================================================================
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${AWS::StackName}-n8n
+      RetentionInDays: 7
+
+  # ============================================================================
+  # ECS CLUSTER
+  # ============================================================================
+
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub ${AWS::StackName}-cluster
+      ClusterSettings:
+        - Name: containerInsights
+          Value: disabled
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-cluster
+
+  # ============================================================================
+  # ECS TASK DEFINITION - FIXED WITH ACCESS POINT
+  # ============================================================================
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${AWS::StackName}-n8n-task
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      Volumes:
+        - Name: n8n-data
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref FileSystem
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              IAM: ENABLED
+              AccessPointId: !Ref EFSAccessPoint
+      ContainerDefinitions:
+        - Name: n8n
+          Image: n8nio/n8n:latest
+          Essential: true
+          PortMappings:
+            - ContainerPort: 5678
+              Protocol: tcp
+          MountPoints:
+            - SourceVolume: n8n-data
+              ContainerPath: /home/node/.n8n
+              ReadOnly: false
+          Environment:
+            - Name: N8N_PORT
+              Value: '5678'
+            - Name: N8N_PROTOCOL
+              Value: http
+            - Name: N8N_SECURE_COOKIE
+              Value: 'false'
+            - Name: WEBHOOK_URL
+              Value: !Sub http://${NetworkLoadBalancer.DNSName}
+            - Name: GENERIC_TIMEZONE
+              Value: America/New_York
+            - Name: N8N_HOST
+              Value: !GetAtt NetworkLoadBalancer.DNSName
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: n8n
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-task-def
+
+  # ============================================================================
+  # ECS SERVICE
+  # ============================================================================
+
+  ECSService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - NetworkLoadBalancerListener
+      - MountTarget1
+      - MountTarget2
+      - EFSAccessPoint
+    Properties:
+      ServiceName: !Sub ${AWS::StackName}-n8n-service
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
+          SecurityGroups:
+            - !Ref ECSSecurityGroup
+      LoadBalancers:
+        - ContainerName: n8n
+          ContainerPort: 5678
+          TargetGroupArn: !Ref TargetGroup
+      HealthCheckGracePeriodSeconds: 120
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-service
+
+  # ============================================================================
+  # S3 BUCKET
+  # ============================================================================
+
+  WorkflowBackupBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-n8n-backups-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldBackups
+            Status: Enabled
+            ExpirationInDays: 30
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-backups
+
+  # ============================================================================
+  # S3 CLEANUP LAMBDA
+  # ============================================================================
+
+  S3CleanupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3CleanupPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:DeleteObject
+                  - s3:DeleteObjectVersion
+                  - s3:ListBucketVersions
+                Resource:
+                  - !GetAtt WorkflowBackupBucket.Arn
+                  - !Sub ${WorkflowBackupBucket.Arn}/*
+
+  S3CleanupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt S3CleanupRole.Arn
+      Runtime: python3.11
+      Timeout: 300
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def handler(event, context):
+              logger.info('Received event: %s', event)
+              
+              try:
+                  bucket_name = event['ResourceProperties']['BucketName']
+                  
+                  if event['RequestType'] == 'Delete':
+                      s3 = boto3.client('s3')
+                      
+                      paginator = s3.get_paginator('list_object_versions')
+                      for page in paginator.paginate(Bucket=bucket_name):
+                          objects = []
+                          if 'Versions' in page:
+                              objects.extend([{'Key': v['Key'], 'VersionId': v['VersionId']} 
+                                            for v in page['Versions']])
+                          if 'DeleteMarkers' in page:
+                              objects.extend([{'Key': m['Key'], 'VersionId': m['VersionId']} 
+                                            for m in page['DeleteMarkers']])
+                          
+                          if objects:
+                              s3.delete_objects(Bucket=bucket_name, Delete={'Objects': objects})
+                      
+                      logger.info(f'Successfully cleaned bucket: {bucket_name}')
+                  
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  
+              except Exception as e:
+                  logger.error(f'Error: {str(e)}')
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
+  BucketCleanup:
+    Type: Custom::S3Cleanup
+    Properties:
+      ServiceToken: !GetAtt S3CleanupFunction.Arn
+      BucketName: !Ref WorkflowBackupBucket
+
+# ============================================================================
+# OUTPUTS
+# ============================================================================
+
+Outputs:
+  FrontendURL:
+    Description: N8N Web Interface URL
+    Value: !Sub http://${NetworkLoadBalancer.DNSName}
+
+  BackendURL:
+    Description: N8N Webhook Base URL
+    Value: !Sub http://${NetworkLoadBalancer.DNSName}
+
+  LoadBalancerDNS:
+    Description: Network Load Balancer DNS Name
+    Value: !GetAtt NetworkLoadBalancer.DNSName
+
+  S3BucketName:
+    Description: S3 Bucket for workflow backups
+    Value: !Ref WorkflowBackupBucket
+
+  S3BucketLink:
+    Description: Link to S3 bucket in console
+    Value: !Sub https://s3.console.aws.amazon.com/s3/buckets/${WorkflowBackupBucket}
+
+  EFSFileSystemId:
+    Description: EFS File System ID for N8N data persistence
+    Value: !Ref FileSystem
+
+  EFSAccessPointId:
+    Description: EFS Access Point ID
+    Value: !Ref EFSAccessPoint
+
+  ECSClusterName:
+    Description: ECS Cluster Name
+    Value: !Ref ECSCluster
+
+  ECSServiceName:
+    Description: ECS Service Name
+    Value: !GetAtt ECSService.Name
+
+  CloudWatchLogsGroup:
+    Description: CloudWatch Logs Group for N8N
+    Value: !Ref LogGroup
