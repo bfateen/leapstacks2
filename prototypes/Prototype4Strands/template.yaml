@@ -71,6 +71,7 @@ Resources:
                   - s3:DeleteObject
                   - s3:ListObjectVersions
                   - s3:DeleteObjectVersion
+                  - s3:ListBucketVersions
                 Resource: 
                   - !Sub '${ArtifactsBucket.Arn}'
                   - !Sub '${ArtifactsBucket.Arn}/*'
