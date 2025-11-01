@@ -397,7 +397,7 @@ Resources:
     DeletionPolicy: Delete
     UpdateReplacePolicy: Delete
     Properties:
-      BucketName: !Sub ${AWS::StackName}-n8n-backups-${AWS::AccountId}
+      BucketName: !Sub leapn8n-backups-${AWS::AccountId}
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
