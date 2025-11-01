@@ -197,9 +197,9 @@ Resources:
       HealthCheckEnabled: true
       HealthCheckProtocol: TCP
       HealthCheckPort: '5678'
-      HealthCheckIntervalSeconds: 30
-      HealthyThresholdCount: 3
-      UnhealthyThresholdCount: 3
+      HealthCheckIntervalSeconds: 10
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
       TargetGroupAttributes:
         - Key: deregistration_delay.timeout_seconds
           Value: '30'
@@ -380,7 +380,7 @@ Resources:
         - ContainerName: n8n
           ContainerPort: 5678
           TargetGroupArn: !Ref TargetGroup
-      HealthCheckGracePeriodSeconds: 120
+      HealthCheckGracePeriodSeconds: 60
       DeploymentConfiguration:
         MaximumPercent: 200
         MinimumHealthyPercent: 100
@@ -501,6 +501,127 @@ Resources:
       ServiceToken: !GetAtt S3CleanupFunction.Arn
       BucketName: !Ref WorkflowBackupBucket
 
+  ServiceWaiterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ECSServiceWaiterPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecs:DescribeServices
+                  - ecs:DescribeTasks
+                  - ecs:ListTasks
+                  - elasticloadbalancing:DescribeTargetHealth
+                Resource: '*'
+
+  ServiceWaiterFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt ServiceWaiterRole.Arn
+      Runtime: python3.11
+      Timeout: 300
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import logging
+          import time
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def handler(event, context):
+              logger.info('Received event: %s', event)
+              
+              try:
+                  cluster = event['ResourceProperties']['ClusterName']
+                  service = event['ResourceProperties']['ServiceName']
+                  target_group_arn = event['ResourceProperties']['TargetGroupArn']
+                  
+                  if event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      return
+                  
+                  ecs = boto3.client('ecs')
+                  elbv2 = boto3.client('elbv2')
+                  
+                  # Wait for service to stabilize (max 4 minutes)
+                  max_attempts = 24
+                  attempt = 0
+                  
+                  while attempt < max_attempts:
+                      attempt += 1
+                      
+                      # Check ECS service status
+                      response = ecs.describe_services(cluster=cluster, services=[service])
+                      
+                      if not response['services']:
+                          logger.warning(f'Service not found, attempt {attempt}/{max_attempts}')
+                          time.sleep(10)
+                          continue
+                      
+                      service_info = response['services'][0]
+                      running_count = service_info.get('runningCount', 0)
+                      desired_count = service_info.get('desiredCount', 0)
+                      
+                      logger.info(f'Service status: {running_count}/{desired_count} tasks running')
+                      
+                      if running_count == desired_count and running_count > 0:
+                          # Check target health
+                          try:
+                              health_response = elbv2.describe_target_health(
+                                  TargetGroupArn=target_group_arn
+                              )
+                              
+                              healthy_targets = [
+                                  t for t in health_response['TargetHealthDescriptions']
+                                  if t['TargetHealth']['State'] == 'healthy'
+                              ]
+                              
+                              logger.info(f'Healthy targets: {len(healthy_targets)}')
+                              
+                              if len(healthy_targets) >= desired_count:
+                                  logger.info('Service is stable and healthy!')
+                                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                                      'Message': 'Service is ready and healthy'
+                                  })
+                                  return
+                          except Exception as e:
+                              logger.warning(f'Error checking target health: {str(e)}')
+                      
+                      time.sleep(10)
+                  
+                  # Timeout reached
+                  logger.warning('Timeout waiting for service to be healthy')
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                      'Message': 'Service created but health check timed out'
+                  })
+                  
+              except Exception as e:
+                  logger.error(f'Error: {str(e)}')
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})              
+
+  ServiceReadyWaiter:
+    Type: Custom::ECSServiceWaiter
+    DependsOn: ECSService
+    Properties:
+      ServiceToken: !GetAtt ServiceWaiterFunction.Arn
+      ClusterName: !Ref ECSCluster
+      ServiceName: !GetAtt ECSService.Name
+      TargetGroupArn: !Ref TargetGroup
 # ============================================================================
 # OUTPUTS
 # ============================================================================
