@@ -5,7 +5,7 @@ Parameters:
   AgentName:
     Type: String
     Description: 'Name of the Strands agent (letters, numbers, underscores only; must start with letter; max 48 chars)'
-    Default: myagent
+    Default: myagentleap123
     AllowedPattern: '[a-zA-Z][a-zA-Z0-9_]{0,47}'
     ConstraintDescription: 'Must start with a letter and contain only letters, numbers, and underscores (max 48 characters)'
 
