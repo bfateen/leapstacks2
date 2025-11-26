@@ -1,6 +1,6 @@
 {
     "title": "Serverless Strands Agent + MCP",
-    "description": "A multi-modal application that can view and monitor websites for changes.",
+    "description": "Deploys an Agent using Strands via Lambda with MCP servers",
     "fulldescription": "A full-stack application that enables intelligent document interactions using Amazon Bedrock's Knowledge Base and Agent capabilities. This prototype demonstrates Retrieval-Augmented Generation (RAG) on Amazon Bedrock for building AI-powered document question-answering systems.",
     "icon": "leapai_web.png",
     "videoUrl": "Proto3.mp4",
