@@ -1,6 +1,6 @@
 {
     "title": "N8N Automations",
-    "description": "A multi-modal application that can view and monitor websites for changes.",
+    "description": "n8n is a low-code tool that simplifies workflow automation",
     "fulldescription": "A full-stack application that enables intelligent document interactions using Amazon Bedrock's Knowledge Base and Agent capabilities. This prototype demonstrates Retrieval-Augmented Generation (RAG) on Amazon Bedrock for building AI-powered document question-answering systems.",
     "icon": "leapai_web.png",
     "videoUrl": "Proto3.mp4",
