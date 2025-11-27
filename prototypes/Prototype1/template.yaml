@@ -128,6 +128,22 @@ Resources:
                 Action:
                   - bedrock:*
                 Resource: '*'
+        - PolicyName: BedrockInferenceProfileAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:CreateInferenceProfile
+                  - bedrock:GetInferenceProfile
+                  - bedrock:ListInferenceProfiles
+                  - bedrock:DeleteInferenceProfile
+                  - bedrock:TagResource
+                  - bedrock:UntagResource
+                  - bedrock:ListTagsForResource
+                Resource:
+                  - 'arn:aws:bedrock:*:*:inference-profile/*'
+                  - 'arn:aws:bedrock:*:*:application-inference-profile/*'
         - PolicyName: DynamoDBAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -162,57 +178,109 @@ Resources:
           import boto3
           import time
           import uuid
-          import os
           from datetime import datetime
+          import hashlib
+
+          def get_inference_profile_name(model_id, stack_name):
+              """Generate a consistent inference profile name for a model"""
+              # Create a short hash of the model_id to keep name manageable
+              model_hash = hashlib.md5(model_id.encode()).hexdigest()[:8]
+              # Clean model_id for use in name (remove special chars)
+              clean_model = model_id.replace(':', '-').replace('.', '-')
+              return f"{stack_name}-{clean_model}-{model_hash}"
+
+          def list_existing_profiles(bedrock_client, profile_name):
+              """Check if an inference profile already exists"""
+              try:
+                  response = bedrock_client.list_inference_profiles(
+                      maxResults=100
+                  )
+                  
+                  # Check if profile with this name exists
+                  for profile in response.get('inferenceProfileSummaries', []):
+                      if profile.get('inferenceProfileName') == profile_name:
+                          return profile.get('inferenceProfileArn')
+                  
+                  return None
+              except Exception as e:
+                  print(f"Error listing profiles: {str(e)}")
+                  return None
+
+          def create_inference_profile(bedrock_client, model_id, profile_name, stack_name, region):
+              """Create an application inference profile for the given model"""
+              try:
+                  # Construct the model ARN
+                  model_arn = f"arn:aws:bedrock:{region}::foundation-model/{model_id}"
+                  
+                  print(f"Creating inference profile: {profile_name} for model: {model_id}")
+                  
+                  response = bedrock_client.create_inference_profile(
+                      inferenceProfileName=profile_name,
+                      description=f"Auto-created inference profile for {model_id} in stack {stack_name}",
+                      modelSource={
+                          'copyFrom': model_arn
+                      },
+                      tags=[
+                          {'key': 'StackName', 'value': stack_name},
+                          {'key': 'ModelId', 'value': model_id},
+                          {'key': 'ManagedBy', 'value': 'LEAP'},
+                          {'key': 'Environment', 'value': 'Production'},
+                          {'key': 'CreatedAt', 'value': datetime.now().isoformat()}
+                      ]
+                  )
+                  
+                  profile_arn = response.get('inferenceProfileArn')
+                  print(f"Successfully created inference profile: {profile_arn}")
+                  
+                  # Wait a moment for profile to become active
+                  time.sleep(2)
+                  
+                  return profile_arn
+                  
+              except bedrock_client.exceptions.ConflictException as e:
+                  # Profile already exists, try to get it
+                  print(f"Profile already exists, attempting to retrieve: {str(e)}")
+                  return list_existing_profiles(bedrock_client, profile_name)
+                  
+              except Exception as e:
+                  print(f"Error creating inference profile: {str(e)}")
+                  # Return None to fall back to direct model invocation
+                  return None
+
+          def get_or_create_inference_profile(model_id, stack_name, region):
+              """Get existing inference profile or create a new one"""
+              bedrock_client = boto3.client('bedrock', region_name=region)
+              
+              # Generate profile name
+              profile_name = get_inference_profile_name(model_id, stack_name)
+              
+              # Check if profile already exists
+              existing_arn = list_existing_profiles(bedrock_client, profile_name)
+              
+              if existing_arn:
+                  print(f"Using existing inference profile: {existing_arn}")
+                  return existing_arn
+              
+              # Create new profile
+              profile_arn = create_inference_profile(
+                  bedrock_client, 
+                  model_id, 
+                  profile_name, 
+                  stack_name, 
+                  region
+              )
+              
+              return profile_arn
 
           def lambda_handler(event, context):
-              model_id = "amazon.nova-pro-v1:0"
+              # Get model from environment or request
+              model_id = "amazon.nova-pro-v1:0"  # Default
               
               try:
                   # Start timing the request
                   start_time = time.time()
                   request_id = str(uuid.uuid4())
-                  timestamp = int(datetime.now().timestamp() * 1000)  # Milliseconds since epoch
-
-                  # Get the expected API key from environment
-                  expected_api_key = os.environ.get('API_KEY')
-                  
-                  # Extract API key from headers
-                  headers = event.get('headers', {})
-                  # Handle case-insensitive header lookup
-                  provided_api_key = None
-                  for header_name, header_value in headers.items():
-                      if header_name.lower() == 'x-api-key':
-                          provided_api_key = header_value
-                          break
-                  
-                  client_ip = event.get('requestContext', {}).get('identity', {}).get('sourceIp', 'unknown')
-                  
-                  # Validate API key
-                  if not provided_api_key or provided_api_key != expected_api_key:
-                      error_response = {
-                          'statusCode': 401,
-                          'headers': {
-                              'Access-Control-Allow-Origin': '*',
-                              'Access-Control-Allow-Headers': 'Content-Type,X-API-Key',
-                              'Access-Control-Allow-Methods': 'OPTIONS,POST'
-                          },
-                          'body': json.dumps({'error': 'Invalid or missing API key'})
-                      }
-                      
-                      # Log unauthorized access attempt
-                      log_to_dynamodb(
-                          request_id=request_id,
-                          timestamp=timestamp,
-                          user_message="",
-                          bot_response="",
-                          latency=time.time() - start_time,
-                          client_ip=client_ip,
-                          status_code=401,
-                          error="Invalid or missing API key"
-                      )
-                      
-                      return error_response
+                  timestamp = int(datetime.now().timestamp() * 1000)
                   
                   # Parse the incoming message from the request body
                   body = event.get('body', '{}')
@@ -222,12 +290,16 @@ Resources:
                   user_message = body.get('message', '')
                   client_ip = event.get('requestContext', {}).get('identity', {}).get('sourceIp', 'unknown')
                   
+                  # Allow model override from request
+                  if body.get('model_id'):
+                      model_id = body.get('model_id')
+                  
                   if not user_message:
                       error_response = {
                           'statusCode': 400,
                           'headers': {
                               'Access-Control-Allow-Origin': '*',
-                              'Access-Control-Allow-Headers': 'Content-Type,X-API-Key',
+                              'Access-Control-Allow-Headers': 'Content-Type',
                               'Access-Control-Allow-Methods': 'OPTIONS,POST'
                           },
                           'body': json.dumps({'error': 'No message provided'})
@@ -242,15 +314,29 @@ Resources:
                           latency=time.time() - start_time,
                           client_ip=client_ip,
                           status_code=400,
-                          error="No message provided"
+                          error="No message provided",
+                          model_id=model_id
                       )
                       
                       return error_response
                   
                   print(f"Processing request {request_id}: {user_message}")
                   
+                  # Get stack name from environment
+                  import os
+                  stack_name = os.environ.get('STACK_NAME', 'unknown-stack')
+                  region = os.environ.get('AWS_REGION', 'us-east-1')
+                  
+                  # Get or create inference profile
+                  inference_profile_arn = get_or_create_inference_profile(model_id, stack_name, region)
+                  
+                  # Use inference profile if available, otherwise use model directly
+                  model_identifier = inference_profile_arn if inference_profile_arn else model_id
+                  
+                  print(f"Using model identifier: {model_identifier}")
+                  
                   # Call Bedrock
-                  bedrock_client = boto3.client("bedrock-runtime")
+                  bedrock_runtime = boto3.client("bedrock-runtime", region_name=region)
                   
                   msg = {
                       "role": "user",
@@ -259,12 +345,10 @@ Resources:
                       ]
                   }
                   
-                  
-                  
                   bedrock_start_time = time.time()
                   try:
-                      response = bedrock_client.converse(
-                          modelId=model_id,
+                      response = bedrock_runtime.converse(
+                          modelId=model_identifier,
                           messages=[msg],
                           inferenceConfig={
                               "maxTokens": 512,
@@ -280,8 +364,6 @@ Resources:
                       input_tokens = response.get("usage", {}).get("inputTokens", 0)
                       output_tokens = response.get("usage", {}).get("outputTokens", 0)
                       total_tokens = input_tokens + output_tokens
-                      
-                      
                       
                       # Calculate total latency
                       total_latency = time.time() - start_time
@@ -300,7 +382,8 @@ Resources:
                           input_tokens=input_tokens,
                           output_tokens=output_tokens,
                           total_tokens=total_tokens,
-                          model_id=model_id
+                          model_id=model_id,
+                          inference_profile_arn=inference_profile_arn
                       )
                       
                       # Return response with CORS headers
@@ -328,6 +411,7 @@ Resources:
                           client_ip=client_ip,
                           status_code=500,
                           model_id=model_id,
+                          inference_profile_arn=inference_profile_arn,
                           error=f"Bedrock API error: {bedrock_error_str}"
                       )
                       
@@ -371,7 +455,9 @@ Resources:
                       'body': json.dumps({'error': error_str})
                   }
 
-          def log_to_dynamodb(request_id, timestamp, user_message, bot_response, latency, client_ip, status_code, error=None, bedrock_latency=None, input_tokens=None, output_tokens=None, total_tokens=None, model_id=None, model_version=None):
+          def log_to_dynamodb(request_id, timestamp, user_message, bot_response, latency, client_ip, status_code, 
+                              error=None, bedrock_latency=None, input_tokens=None, output_tokens=None, 
+                              total_tokens=None, model_id=None, model_version=None, inference_profile_arn=None):
               """
               Logs chat information to DynamoDB
               """
@@ -386,7 +472,6 @@ Resources:
                   
                   # Use default name if environment variable not found
                   if not table_name:
-                      # Default table name as fallback
                       table_name = "bedrock-chat-logs"
                       print(f"Warning: Using default table name: {table_name}")
                   
@@ -396,9 +481,9 @@ Resources:
                   item = {
                       'id': request_id,
                       'timestamp': timestamp,
-                      'user_message': user_message[:1000] if user_message else "",  # Truncate if too long
-                      'bot_response': bot_response[:1000] if bot_response else "",  # Truncate if too long
-                      'latency_ms': int(latency * 1000),  # Convert to milliseconds
+                      'user_message': user_message[:1000] if user_message else "",
+                      'bot_response': bot_response[:1000] if bot_response else "",
+                      'latency_ms': int(latency * 1000),
                       'client_ip': client_ip,
                       'status_code': status_code,
                       'date': datetime.fromtimestamp(timestamp/1000).strftime('%Y-%m-%d'),
@@ -406,10 +491,10 @@ Resources:
                   
                   # Add optional fields if they exist
                   if error:
-                      item['error'] = error[:1000]  # Truncate if too long
+                      item['error'] = error[:1000]
                   
                   if bedrock_latency is not None:
-                      item['bedrock_latency_ms'] = int(bedrock_latency * 1000)  # Convert to milliseconds
+                      item['bedrock_latency_ms'] = int(bedrock_latency * 1000)
                   
                   # Add token usage information if available
                   if input_tokens is not None:
@@ -428,20 +513,27 @@ Resources:
                   if model_version is not None:
                       item['model_version'] = model_version
                   
+                  # Add inference profile ARN if used
+                  if inference_profile_arn is not None:
+                      item['inference_profile_arn'] = inference_profile_arn
+                      item['used_inference_profile'] = True
+                  else:
+                      item['used_inference_profile'] = False
+                  
                   # Store in DynamoDB
                   table.put_item(Item=item)
                   print(f"Logged to DynamoDB: {request_id}")
                   
               except Exception as e:
                   print(f"Error logging to DynamoDB: {str(e)}")
-                  # Don't re-raise the exception to avoid breaking the main function
       Runtime: python3.9
       Timeout: 30
-      MemorySize: 128
+      MemorySize: 256
       Environment:
         Variables:
           DYNAMODB_TABLE_NAME: !Ref ChatLogTable
           API_KEY: !GetAtt CustomAPIKey.ApiKeyValue
+          STACK_NAME: !Ref AWS::StackName
 
   # API Gateway
   ChatAPI:
@@ -736,6 +828,56 @@ Resources:
                   - s3:GetObject
                 Resource: !Sub '${PrivateS3Bucket.Arn}/*'
 
+  ProfileCleanupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.9
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          
+          def handler(event, context):
+              try:
+                  if event['RequestType'] == 'Delete':
+                      bedrock = boto3.client('bedrock')
+                      stack_name = event['ResourceProperties']['StackName']
+                      
+                      # List all profiles
+                      response = bedrock.list_inference_profiles(maxResults=100)
+                      
+                      # Delete profiles belonging to this stack
+                      deleted_count = 0
+                      for profile in response.get('inferenceProfileSummaries', []):
+                          if stack_name in profile.get('inferenceProfileName', ''):
+                              try:
+                                  bedrock.delete_inference_profile(
+                                      inferenceProfileIdentifier=profile['inferenceProfileArn']
+                                  )
+                                  deleted_count += 1
+                                  print(f"Deleted profile: {profile['inferenceProfileArn']}")
+                              except Exception as e:
+                                  print(f"Error deleting profile: {str(e)}")
+                      
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, 
+                                    {'DeletedProfiles': deleted_count})
+                  else:
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, 
+                                {'Error': str(e)})
+
+  ProfileCleanup:
+    Type: Custom::ProfileCleanup
+    Properties:
+      ServiceToken: !GetAtt ProfileCleanupFunction.Arn
+      StackName: !Ref AWS::StackName
+      
   S3UploaderFunction:
     Type: 'AWS::Lambda::Function'
     DependsOn:
@@ -926,7 +1068,7 @@ Resources:
               else:
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
       Runtime: python3.9
-      Timeout: 30
+      Timeout: 60
 
   UploadHTMLAndGenerateURL:
     Type: 'Custom::S3Upload'
@@ -977,3 +1119,11 @@ Outputs:
   LambdaFunctionARN:
     Description: ARN of the Lambda function
     Value: !GetAtt ChatFunction.Arn
+
+  InferenceProfileInfo:
+    Description: 'Information about inference profile usage'
+    Value: !Sub 'Profiles are auto-created per model. Check AWS Bedrock console for details.'
+
+  InferenceProfileNamingPattern:
+    Description: 'Pattern used for inference profile names'
+    Value: !Sub '${AWS::StackName}-{model-id}-{hash}'
