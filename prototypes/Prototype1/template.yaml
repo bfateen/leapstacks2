@@ -457,7 +457,7 @@ Resources:
 
           def lambda_handler(event, context):
               # Default model - should be overridden by template parameter
-              model_id = "amazon.nova-pro-v1:0"
+              model_id = "USERSELMODEL"
               
               try:
                   # Start timing the request
