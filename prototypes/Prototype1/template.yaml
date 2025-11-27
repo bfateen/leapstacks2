@@ -180,78 +180,262 @@ Resources:
           import uuid
           from datetime import datetime
           import hashlib
+          import os
+
+          # Model configuration mapping: determines which models need system-defined inference profiles
+          MODEL_PROFILE_CONFIG = {
+              # Claude 4.x models - must use system-defined inference profiles
+              'anthropic.claude-sonnet-4-5-20250929-v1:0': {
+                  'type': 'system_profile',
+                  'profile_id': 'global.anthropic.claude-sonnet-4-5-20250929-v1:0'
+              },
+              'anthropic.claude-sonnet-4-20250514-v1:0': {
+                  'type': 'system_profile', 
+                  'profile_id': 'global.anthropic.claude-sonnet-4-20250514-v1:0'
+              },
+              'anthropic.claude-haiku-4-5-20251001-v1:0': {
+                  'type': 'system_profile',
+                  'profile_id': 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
+              },
+              'anthropic.claude-opus-4-5-20251101-v1:0': {
+                  'type': 'system_profile',
+                  'profile_id': 'global.anthropic.claude-opus-4-5-20251101-v1:0'
+              },
+              
+              # Claude 3.x models - can use direct model ARN (ON_DEMAND supported)
+              'anthropic.claude-3-7-sonnet-20250219-v1:0': {
+                  'type': 'direct_model'
+              },
+              'anthropic.claude-3-5-sonnet-20241022-v2:0': {
+                  'type': 'direct_model'
+              },
+              'anthropic.claude-3-5-sonnet-20240620-v1:0': {
+                  'type': 'direct_model'
+              },
+              'anthropic.claude-3-5-haiku-20241022-v1:0': {
+                  'type': 'direct_model'
+              },
+              'anthropic.claude-3-sonnet-20240229-v1:0': {
+                  'type': 'direct_model'
+              },
+              'anthropic.claude-3-haiku-20240307-v1:0': {
+                  'type': 'direct_model'
+              },
+              
+              # Meta Llama 4.x models - must use system-defined inference profiles
+              'meta.llama-4-scout-17b-instruct-v1:0': {
+                  'type': 'system_profile',
+                  'profile_id': 'us.meta.llama-4-scout-17b-instruct-v1:0'
+              },
+              'meta.llama-4-maverick-17b-instruct-v1:0': {
+                  'type': 'system_profile',
+                  'profile_id': 'us.meta.llama-4-maverick-17b-instruct-v1:0'
+              },
+              
+              # Meta Llama 3.3 models - must use system-defined inference profiles
+              'meta.llama3-3-70b-instruct-v1:0': {
+                  'type': 'system_profile',
+                  'profile_id': 'us.meta.llama3-3-70b-instruct-v1:0'
+              },
+              
+              # Meta Llama 3.2 models - must use system-defined inference profiles
+              'meta.llama3-2-1b-instruct-v1:0': {
+                  'type': 'system_profile',
+                  'profile_id': 'us.meta.llama3-2-1b-instruct-v1:0'
+              },
+              'meta.llama3-2-3b-instruct-v1:0': {
+                  'type': 'system_profile',
+                  'profile_id': 'us.meta.llama3-2-3b-instruct-v1:0'
+              },
+              'meta.llama3-2-11b-instruct-v1:0': {
+                  'type': 'system_profile',
+                  'profile_id': 'us.meta.llama3-2-11b-instruct-v1:0'
+              },
+              'meta.llama3-2-90b-instruct-v1:0': {
+                  'type': 'system_profile',
+                  'profile_id': 'us.meta.llama3-2-90b-instruct-v1:0'
+              },
+              
+              # Meta Llama 3.1 models - must use system-defined inference profiles
+              'meta.llama3-1-8b-instruct-v1:0': {
+                  'type': 'system_profile',
+                  'profile_id': 'us.meta.llama3-1-8b-instruct-v1:0'
+              },
+              'meta.llama3-1-70b-instruct-v1:0': {
+                  'type': 'system_profile',
+                  'profile_id': 'us.meta.llama3-1-70b-instruct-v1:0'
+              },
+              'meta.llama3-1-405b-instruct-v1:0': {
+                  'type': 'system_profile',
+                  'profile_id': 'us.meta.llama3-1-405b-instruct-v1:0'
+              },
+              
+              # Meta Llama 3.0 models - must use system-defined inference profiles
+              'meta.llama3-8b-instruct-v1:0': {
+                  'type': 'system_profile',
+                  'profile_id': 'us.meta.llama3-8b-instruct-v1:0'
+              },
+              'meta.llama3-70b-instruct-v1:0': {
+                  'type': 'system_profile',
+                  'profile_id': 'us.meta.llama3-70b-instruct-v1:0'
+              },
+              
+              # Meta Llama 2 models - can use direct model ARN
+              'meta.llama2-13b-chat-v1': {
+                  'type': 'direct_model'
+              },
+              'meta.llama2-70b-chat-v1': {
+                  'type': 'direct_model'
+              },
+              
+              # Amazon Nova models - all support direct model ARN
+              'amazon.nova-pro-v1:0': {
+                  'type': 'direct_model'
+              },
+              'amazon.nova-lite-v1:0': {
+                  'type': 'direct_model'
+              },
+              'amazon.nova-micro-v1:0': {
+                  'type': 'direct_model'
+              },
+              'amazon.nova-premier-v1:0': {
+                  'type': 'direct_model'
+              },
+              
+              # Amazon Titan models - all support direct model ARN
+              'amazon.titan-text-premier-v1:0': {
+                  'type': 'direct_model'
+              },
+              'amazon.titan-text-express-v1': {
+                  'type': 'direct_model'
+              },
+              'amazon.titan-text-lite-v1': {
+                  'type': 'direct_model'
+              }
+          }
 
           def get_inference_profile_name(model_id, stack_name):
-              """Generate a consistent inference profile name for a model"""
-              # Create a short hash of the model_id to keep name manageable
-              model_hash = hashlib.md5(model_id.encode()).hexdigest()[:8]
-              # Clean model_id for use in name (remove special chars)
-              clean_model = model_id.replace(':', '-').replace('.', '-')
-              return f"{stack_name}-{clean_model}-{model_hash}"
+              """
+              Generate a consistent, shortened profile name that fits within 64 character limit.
+              Format: leap-{model-short}-{hash}
+              Example: leap-claude-sonnet-92b23f7c1234
+              """
+              # Extract meaningful part of model name
+              model_parts = model_id.replace('anthropic.', '').replace('amazon.', '')
+              model_parts = model_parts.split('-')
+              
+              # Take first 2-3 meaningful parts
+              if 'claude' in model_parts:
+                  short_name = '-'.join([p for p in model_parts[:3] if p not in ['v1', 'v2', '0']])
+              elif 'nova' in model_parts or 'titan' in model_parts:
+                  short_name = '-'.join([p for p in model_parts[:2] if p not in ['v1', '0']])
+              else:
+                  short_name = '-'.join(model_parts[:2])
+              
+              # Create hash from full model_id and stack_name for uniqueness
+              hash_input = f"{model_id}-{stack_name}"
+              hash_suffix = hashlib.md5(hash_input.encode()).hexdigest()[:12]
+              
+              # Final name: leap-{short-model}-{hash} (max 64 chars)
+              profile_name = f"leap-{short_name}-{hash_suffix}"
+              
+              # Ensure it's within limit
+              if len(profile_name) > 64:
+                  profile_name = profile_name[:64]
+              
+              return profile_name
 
           def list_existing_profiles(bedrock_client, profile_name):
-              """Check if an inference profile already exists"""
+              """
+              Check if an inference profile with the given name already exists.
+              Returns the profile ARN if found, None otherwise.
+              """
               try:
                   response = bedrock_client.list_inference_profiles(
-                      maxResults=100
+                      maxResults=100,
+                      typeEquals='APPLICATION'
                   )
                   
-                  # Check if profile with this name exists
                   for profile in response.get('inferenceProfileSummaries', []):
                       if profile.get('inferenceProfileName') == profile_name:
                           return profile.get('inferenceProfileArn')
                   
                   return None
               except Exception as e:
-                  print(f"Error listing profiles: {str(e)}")
+                  print(f"Error listing inference profiles: {str(e)}")
                   return None
 
-          def create_inference_profile(bedrock_client, model_id, profile_name, stack_name, region):
-              """Create an application inference profile for the given model"""
+          def create_inference_profile(bedrock_client, profile_name, model_id, stack_name, region):
+              """
+              Create an application inference profile for cost tracking.
+              Handles both direct model ARNs (Claude 3.x, Nova, Titan) and 
+              system-defined inference profiles (Claude 4.x).
+              """
               try:
-                  # Construct the model ARN
-                  model_arn = f"arn:aws:bedrock:{region}::foundation-model/{model_id}"
+                  # Get model configuration
+                  model_config = MODEL_PROFILE_CONFIG.get(model_id, {'type': 'direct_model'})
                   
-                  print(f"Creating inference profile: {profile_name} for model: {model_id}")
+                  if model_config['type'] == 'system_profile':
+                      # Claude 4.x: Create from system-defined inference profile
+                      source_arn = f"arn:aws:bedrock:{region}::inference-profile/{model_config['profile_id']}"
+                      print(f"Creating application profile from system-defined profile: {source_arn}")
+                  else:
+                      # Claude 3.x, Nova, Titan: Create from foundation model
+                      source_arn = f"arn:aws:bedrock:{region}::foundation-model/{model_id}"
+                      print(f"Creating application profile from foundation model: {source_arn}")
                   
                   response = bedrock_client.create_inference_profile(
                       inferenceProfileName=profile_name,
-                      description=f"Auto-created inference profile for {model_id} in stack {stack_name}",
+                      description=f"LEAP application inference profile for {model_id}",
                       modelSource={
-                          'copyFrom': model_arn
+                          'copyFrom': source_arn
                       },
                       tags=[
-                          {'key': 'StackName', 'value': stack_name},
-                          {'key': 'ModelId', 'value': model_id},
-                          {'key': 'ManagedBy', 'value': 'LEAP'},
-                          {'key': 'Environment', 'value': 'Production'},
-                          {'key': 'CreatedAt', 'value': datetime.now().isoformat()}
+                          {
+                              'key': 'ManagedBy',
+                              'value': 'LEAP'
+                          },
+                          {
+                              'key': 'StackName',
+                              'value': stack_name
+                          },
+                          {
+                              'key': 'ModelId',
+                              'value': model_id
+                          },
+                          {
+                              'key': 'CreatedAt',
+                              'value': datetime.now().isoformat()
+                          }
                       ]
                   )
                   
                   profile_arn = response.get('inferenceProfileArn')
                   print(f"Successfully created inference profile: {profile_arn}")
-                  
-                  # Wait a moment for profile to become active
-                  time.sleep(2)
-                  
                   return profile_arn
                   
-              except bedrock_client.exceptions.ConflictException as e:
-                  # Profile already exists, try to get it
-                  print(f"Profile already exists, attempting to retrieve: {str(e)}")
-                  return list_existing_profiles(bedrock_client, profile_name)
+              except bedrock_client.exceptions.ValidationException as e:
+                  error_msg = str(e)
+                  print(f"ValidationException creating inference profile: {error_msg}")
+                  
+                  # If model doesn't support profiles (shouldn't happen with our config), return None
+                  if "does not support" in error_msg.lower():
+                      print(f"Model {model_id} does not support application inference profiles")
+                      return None
+                  raise
                   
               except Exception as e:
                   print(f"Error creating inference profile: {str(e)}")
-                  # Return None to fall back to direct model invocation
-                  return None
+                  raise
 
           def get_or_create_inference_profile(model_id, stack_name, region):
-              """Get existing inference profile or create a new one"""
+              """
+              Get existing inference profile or create a new one.
+              Returns tuple: (profile_arn, profile_name, was_created)
+              """
               bedrock_client = boto3.client('bedrock', region_name=region)
               
-              # Generate profile name
+              # Generate consistent profile name
               profile_name = get_inference_profile_name(model_id, stack_name)
               
               # Check if profile already exists
@@ -259,22 +443,21 @@ Resources:
               
               if existing_arn:
                   print(f"Using existing inference profile: {existing_arn}")
-                  return existing_arn
+                  return existing_arn, profile_name, False
               
               # Create new profile
-              profile_arn = create_inference_profile(
-                  bedrock_client, 
-                  model_id, 
-                  profile_name, 
-                  stack_name, 
-                  region
-              )
+              print(f"Creating new inference profile: {profile_name}")
+              new_arn = create_inference_profile(bedrock_client, profile_name, model_id, stack_name, region)
               
-              return profile_arn
+              if new_arn:
+                  return new_arn, profile_name, True
+              else:
+                  # Profile creation not supported for this model
+                  return None, None, False
 
           def lambda_handler(event, context):
-              # Get model from environment or request
-              model_id = "amazon.nova-pro-v1:0"  # Default
+              # Default model - should be overridden by template parameter
+              model_id = "amazon.nova-pro-v1:0"
               
               try:
                   # Start timing the request
@@ -282,14 +465,18 @@ Resources:
                   request_id = str(uuid.uuid4())
                   timestamp = int(datetime.now().timestamp() * 1000)
                   
-                  # Parse the incoming message from the request body
+                  # Get environment variables
+                  stack_name = os.environ.get('STACK_NAME', 'unknown-stack')
+                  region = os.environ.get('AWS_REGION', 'us-east-1')
+                  
+                  # Parse the incoming message
                   body = event.get('body', '{}')
                   if isinstance(body, str):
                       body = json.loads(body)
                   
                   user_message = body.get('message', '')
                   client_ip = event.get('requestContext', {}).get('identity', {}).get('sourceIp', 'unknown')
-                  
+
                   # Allow model override from request
                   if body.get('model_id'):
                       model_id = body.get('model_id')
@@ -305,7 +492,6 @@ Resources:
                           'body': json.dumps({'error': 'No message provided'})
                       }
                       
-                      # Log error to DynamoDB
                       log_to_dynamodb(
                           request_id=request_id,
                           timestamp=timestamp,
@@ -320,20 +506,35 @@ Resources:
                       
                       return error_response
                   
-                  print(f"Processing request {request_id}: {user_message}")
+                  print(f"Processing request {body}:{request_id}: {model_id} : {user_message}")
                   
-                  # Get stack name from environment
-                  import os
-                  stack_name = os.environ.get('STACK_NAME', 'unknown-stack')
-                  region = os.environ.get('AWS_REGION', 'us-east-1')
+                  # Get or create inference profile for cost tracking
+                  inference_profile_arn = None
+                  used_inference_profile = False
                   
-                  # Get or create inference profile
-                  inference_profile_arn = get_or_create_inference_profile(model_id, stack_name, region)
-                  
-                  # Use inference profile if available, otherwise use model directly
-                  model_identifier = inference_profile_arn if inference_profile_arn else model_id
-                  
-                  print(f"Using model identifier: {model_identifier}")
+                  try:
+                      profile_arn, profile_name, was_created = get_or_create_inference_profile(
+                          model_id=model_id,
+                          stack_name=stack_name,
+                          region=region
+                      )
+                      
+                      if profile_arn:
+                          inference_profile_arn = profile_arn
+                          used_inference_profile = True
+                          model_identifier = profile_arn
+                          print(f"Using inference profile for invocation: {profile_arn}")
+                          if was_created:
+                              print(f"Created new profile: {profile_name}")
+                      else:
+                          # Fall back to direct model ID
+                          model_identifier = model_id
+                          print(f"Using direct model ID (no profile support): {model_id}")
+                          
+                  except Exception as profile_error:
+                      # If profile creation fails, fall back to direct model invocation
+                      print(f"Profile creation failed, using direct model: {str(profile_error)}")
+                      model_identifier = model_id
                   
                   # Call Bedrock
                   bedrock_runtime = boto3.client("bedrock-runtime", region_name=region)
@@ -348,7 +549,7 @@ Resources:
                   bedrock_start_time = time.time()
                   try:
                       response = bedrock_runtime.converse(
-                          modelId=model_identifier,
+                          modelId=model_identifier,  # Use profile ARN or model ID
                           messages=[msg],
                           inferenceConfig={
                               "maxTokens": 512,
@@ -360,7 +561,7 @@ Resources:
                       output = response["output"]["message"]
                       bot_response = output.get("content", [{}])[0].get("text", "")
                       
-                      # Extract token usage information from the response
+                      # Extract token usage
                       input_tokens = response.get("usage", {}).get("inputTokens", 0)
                       output_tokens = response.get("usage", {}).get("outputTokens", 0)
                       total_tokens = input_tokens + output_tokens
@@ -368,7 +569,7 @@ Resources:
                       # Calculate total latency
                       total_latency = time.time() - start_time
                       
-                      # Log successful request to DynamoDB
+                      # Log successful request
                       log_to_dynamodb(
                           request_id=request_id,
                           timestamp=timestamp,
@@ -383,10 +584,10 @@ Resources:
                           output_tokens=output_tokens,
                           total_tokens=total_tokens,
                           model_id=model_id,
-                          inference_profile_arn=inference_profile_arn
+                          inference_profile_arn=inference_profile_arn,
+                          used_inference_profile=used_inference_profile
                       )
                       
-                      # Return response with CORS headers
                       return {
                           'statusCode': 200,
                           'headers': {
@@ -401,7 +602,6 @@ Resources:
                       bedrock_error_str = str(bedrock_error)
                       print(f"Bedrock API error: {bedrock_error_str}")
                       
-                      # Log Bedrock error to DynamoDB
                       log_to_dynamodb(
                           request_id=request_id,
                           timestamp=timestamp,
@@ -411,8 +611,9 @@ Resources:
                           client_ip=client_ip,
                           status_code=500,
                           model_id=model_id,
+                          error=f"Bedrock API error: {bedrock_error_str}",
                           inference_profile_arn=inference_profile_arn,
-                          error=f"Bedrock API error: {bedrock_error_str}"
+                          used_inference_profile=used_inference_profile
                       )
                       
                       return {
@@ -430,7 +631,6 @@ Resources:
                   print(f"General error: {error_str}")
                   
                   try:
-                      # Try to log the error to DynamoDB
                       log_to_dynamodb(
                           request_id=request_id if 'request_id' in locals() else str(uuid.uuid4()),
                           timestamp=timestamp if 'timestamp' in locals() else int(datetime.now().timestamp() * 1000),
@@ -455,29 +655,24 @@ Resources:
                       'body': json.dumps({'error': error_str})
                   }
 
-          def log_to_dynamodb(request_id, timestamp, user_message, bot_response, latency, client_ip, status_code, 
-                              error=None, bedrock_latency=None, input_tokens=None, output_tokens=None, 
-                              total_tokens=None, model_id=None, model_version=None, inference_profile_arn=None):
+          def log_to_dynamodb(request_id, timestamp, user_message, bot_response, latency, client_ip, 
+                              status_code, error=None, bedrock_latency=None, input_tokens=None, 
+                              output_tokens=None, total_tokens=None, model_id=None, model_version=None,
+                              inference_profile_arn=None, used_inference_profile=False):
               """
-              Logs chat information to DynamoDB
+              Logs chat information to DynamoDB including inference profile usage
               """
               try:
-                  # Initialize DynamoDB client
                   dynamodb = boto3.resource('dynamodb')
-                  table_name = None
-                  
-                  # Get the DynamoDB table name from environment variables
-                  import os
                   table_name = os.environ.get('DYNAMODB_TABLE_NAME')
                   
-                  # Use default name if environment variable not found
                   if not table_name:
                       table_name = "bedrock-chat-logs"
                       print(f"Warning: Using default table name: {table_name}")
                   
                   table = dynamodb.Table(table_name)
                   
-                  # Create the item to store
+                  # Create the item
                   item = {
                       'id': request_id,
                       'timestamp': timestamp,
@@ -487,16 +682,16 @@ Resources:
                       'client_ip': client_ip,
                       'status_code': status_code,
                       'date': datetime.fromtimestamp(timestamp/1000).strftime('%Y-%m-%d'),
+                      'used_inference_profile': used_inference_profile
                   }
                   
-                  # Add optional fields if they exist
+                  # Add optional fields
                   if error:
                       item['error'] = error[:1000]
                   
                   if bedrock_latency is not None:
                       item['bedrock_latency_ms'] = int(bedrock_latency * 1000)
                   
-                  # Add token usage information if available
                   if input_tokens is not None:
                       item['input_tokens'] = input_tokens
                   
@@ -506,19 +701,14 @@ Resources:
                   if total_tokens is not None:
                       item['total_tokens'] = total_tokens
                       
-                  # Add model information if available
                   if model_id is not None:
                       item['model_id'] = model_id
                       
                   if model_version is not None:
                       item['model_version'] = model_version
                   
-                  # Add inference profile ARN if used
                   if inference_profile_arn is not None:
                       item['inference_profile_arn'] = inference_profile_arn
-                      item['used_inference_profile'] = True
-                  else:
-                      item['used_inference_profile'] = False
                   
                   # Store in DynamoDB
                   table.put_item(Item=item)
