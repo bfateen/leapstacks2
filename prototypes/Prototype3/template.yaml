@@ -267,7 +267,7 @@ Resources:
                 prompt = "System Instructions: Please conduct a detailed comparison of the [THE SUBJECT OF INTEREST] in the two provided images. Ensure that you examine every section, item, and element within the menus, and identify any differences, no matter how small. Provide a comprehensive list of [THE SUBJECT OF INTEREST] in both images, and clearly state any discrepancies or additions between them. Your analysis should be factual and based solely on the visual content of the images, without any prior knowledge or assumptions about the differences. If [THE SUBJECT OF INTEREST] specifies specific things to look for like for example:”posts about teeth” then make sure in your analysis that you take into account those details in the subject (in this example, “Posts about TEETH” and not just any different posts). Unless explicitly stated otherwise, ignore changes to layout and positioning of items. First, tell me the details of the specific area of interest of each image separately, even if you think they are identical I want you to provide two separate lists. Second, tell me the differences between them.  \n\nUser Query: " + prompt
                 print("prompt: "+prompt)
                 # Tell me if there is a change in new posts
-                # Prepare the messages for Nova
+                # Prepare the messages
                 messages = [
                     {
                         "role": "user",
@@ -309,10 +309,10 @@ Resources:
                 timestamp = int(datetime.now().timestamp() * 1000)
                 bedrock_start_time = time.time()
 
-                model_id = "amazon.nova-pro-v1:0"
+                model_id = "USERSELMODEL"
                 
 
-                # Call Nova using Converse API
+                # Call using Converse API
                 response = bedrock.converse(
                     modelId=model_id,
                     messages=messages,
@@ -563,7 +563,7 @@ Resources:
                     
                     # Call Nova using Converse API
                     response = bedrock.converse(
-                        modelId='amazon.nova-pro-v1:0',
+                        modelId=model_id,
                         messages=messages,
                         inferenceConfig={
                         "temperature": 0.7,
