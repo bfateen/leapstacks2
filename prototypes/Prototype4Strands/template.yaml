@@ -889,7 +889,7 @@ Resources:
                       
                       # Real Strands Agent Implementation
                       # Real Strands Agent Implementation with Token Tracking
-          strands_agent_code = '''
+                      strands_agent_code = '''
           import json
           import os
           import time
