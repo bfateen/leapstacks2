@@ -5,11 +5,12 @@ Parameters:
   GitHubRepo:
     Type: String
     Description: 'Full GitHub repository URL (e.g., https://github.com/username/repo)'
-  
+    Default: 'LEAP_GITHUB_REPO'
   GitHubToken:
     Type: String
     Description: 'GitHub Personal Access Token for repository access'
     NoEcho: true
+    Default: 'LEAP_GITHUB_TOKEN'
   
   BranchName:
     Type: String
