@@ -125,6 +125,7 @@ Resources:
             dynamodb_table_name = os.environ['DYNAMODB_TABLE_NAME']
             dynamodb_logs_table_name = os.environ['DYNAMODB_LOGS_TABLE_NAME']
             
+            model_id = "USERSELMODEL"
 
             client_ip = 'NA'
 
@@ -309,7 +310,6 @@ Resources:
                 timestamp = int(datetime.now().timestamp() * 1000)
                 bedrock_start_time = time.time()
 
-                model_id = "USERSELMODEL"
                 
 
                 # Call using Converse API
