@@ -1029,9 +1029,7 @@ Resources:
                   
                   bedrock_model = BedrockModel(
                       model_id=model_id,
-                      boto_session=session,
-                      temperature=0.3,
-                      top_p=0.8,
+                      boto_session=session
                   )
                   
                   enhanced_agent = Agent(
