@@ -1285,7 +1285,7 @@ Resources:
 
 
 Outputs:
-  LandingPageURL:
+  FrontendURL:
     Description: Main landing page with login/signup links
     Value: !Sub https://${AppAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/
 
