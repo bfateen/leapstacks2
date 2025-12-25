@@ -29,7 +29,7 @@ Resources:
     Properties:
       Name: !Sub ${AppName}-${AWS::StackName}
       Repository: !Ref GitHubRepo
-      AccessToken: !Ref GitHubToken
+      OauthToken: !Ref GitHubToken
       Platform: WEB
       BuildSpec: |
         version: 1
