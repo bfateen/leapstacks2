@@ -1866,8 +1866,8 @@ Resources:
           </head>
           <body>
             <div class="bar">
-              <button id="load" class="btn">Load</button>
-              <button id="deploy" class="btn" disabled>Deploy</button>
+              <button id="load" class="btn" style="display:none">Load</button>
+              <button id="deploy" class="btn" disabled style="margin-left: auto;">Save and Deploy</button>
               <span id="msg"></span>
             </div>
             <div id="wrap"><div id="editor"></div></div>
@@ -1901,8 +1901,15 @@ Resources:
               }}
               document.getElementById('load').onclick=loadCode;
               document.getElementById('deploy').onclick=deploy;
+
+              window.addEventListener('DOMContentLoaded', function() {
+                // Page loaded
+                loadCode();
+              });
             </script>
           </body></html>"""
+
+                
                 # Upload/overwrite editor page
                 s3.put_object(Bucket=bucket, Key='index.html', Body=html.encode('utf-8'), ContentType='text/html')
                 # Presign for convenience (7 days)
