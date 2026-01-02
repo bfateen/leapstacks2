@@ -3,7 +3,7 @@
   "name": "Photo Gallery",
   "description": "A simple photo gallery to learn AWS S3 object storage",
   "fulldescription": "This beginner-friendly application teaches you the fundamentals of AWS S3 (Simple Storage Service) - the most essential AWS service for storing and retrieving files. Upload photos through a beautiful web interface, view them in a gallery, and learn how object storage works. Perfect for understanding buckets, objects, presigned URLs, and CORS configuration. This is the foundation you'll use in almost every AWS project.",
-  "icon": "icon.png",
+  "icon": "leapai_web.png",
   "videoUrl": "https://www.youtube.com/embed/video-id",
   "applicationName": "PhotoGallery",
   "estimatedCost": "$0.00 - $0.25/month",
