@@ -1,35 +1,44 @@
 {
     "title": "Basic Gen AI Chatbot",
-    "description": "Plug-and-play GenAI full-stack chatbot application",
-    "fulldescription": "Your frontend web application has been created and hosted on Simple Storage Service (S3). This application communites with a Lambda function via API Gateway, which handles the sending and recieivng of messages with the Large Language Model on Amazon Bedrock.",
+    "description": "A simple chatbot that uses AI to answer questions using a serverless architecture.",
+    "fulldescription": "This prototype launches a complete chat application. It uses Amazon S3 to host the website interface you see in your browser. When you send a message, it goes through Amazon API Gateway to an AWS Lambda function. This function sends your text to Amazon Bedrock, which generates the AI response. The conversation history is saved in Amazon DynamoDB so you can keep track of what was said. It is a serverless setup, meaning you do not pay for servers when no one is using it.",
     "icon": "leapai_chat.png",
     "videoUrl": "Proto1.mp4",
     "services": [
         {
-            "name":"S3",
-            "desc":""
+            "name": "Amazon S3",
+            "desc": "Stores the website frontend files securely."
         },
         {
-            "name": "API Gateway",
-            "desc": ""
-        },{
-            "name": "Lambda",
-            "desc": ""
-        },{
-            "name": "Bedrock",
-            "desc": ""
+            "name": "Amazon API Gateway",
+            "desc": "Connects the website frontend to the backend code."
+        },
+        {
+            "name": "AWS Lambda",
+            "desc": "Runs the code that sends your message to the AI model."
+        },
+        {
+            "name": "Amazon Bedrock",
+            "desc": "Provides the AI intelligence to generate responses."
+        },
+        {
+            "name": "Amazon DynamoDB",
+            "desc": "Saves a log of all chat messages and metadata."
+        },
+        {
+            "name": "AWS Identity and Access Management (IAM)",
+            "desc": "Manages security permissions between the services."
         }
     ],
-    "nextStepsHTML":"<ul class=\"todo-list\"> <li> <details> <summary> <input type=\"checkbox\"> Modify the system prompt<\/summary> <p style=\"padding:15px\">1. Click on 'Lambda'<br>2. Find the comment '#SystemPrompt' and change it<br>3. Click 'Deploy changes'<br>4. Try a message and notice the difference in response<\/p><\/details><\/li> <li> <details > <summary> <input type=\"checkbox\"> View\/copy the request code (with API Key)<\/summary> <p style=\"padding:15px\">1. Click on 'S3'<br>2. Locate the frontend file 'Index.html'<br>3. Download the file and open in any code editor<\/p><\/details> <\/li> <li> <input type=\"checkbox\"> <a class=\"download-q-ready-btn\" href=\"#\">Edit live with Amazon Q CLI<\/a> <\/li> <\/ul>",
-    "estimatedCost": "$0.00056/hr",
-    "estimatedTimeString": "Setup time: 1 minute",
-    "costDetailsHTML": "<div style=\"max-width:600px;margin:20px auto;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);border-radius:15px;padding:25px;color:white;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.2)\"><div style=\"text-align:center;margin-bottom:20px\"><h3 style=\"margin:0 0 10px 0;font-size:1.8rem;font-weight:700\">AWS Bedrock Chat Stack</h3><div style=\"background:rgba(255,255,255,0.2);padding:15px;border-radius:10px\"><div style=\"font-size:2.2rem;font-weight:900;margin:0\">$0.003-0.005/hr</div><div style=\"font-size:1.1rem;opacity:0.9\">$2.16-3.60/month</div><div style=\"font-size:0.85rem;margin-top:8px;font-style:italic\">*Excludes AI token costs</div></div></div><div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:15px\"><div style=\"background:rgba(255,255,255,0.15);padding:15px;border-radius:10px;border-left:4px solid #ff6b6b\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\"><span style=\"background:#ff6b6b;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem\">λ</span>Lambda</div><div style=\"font-size:1.2rem;font-weight:700\">~$0.000002/hr</div><div style=\"font-size:0.8rem;opacity:0.9\">128MB, minimal unless high volume</div></div><div style=\"background:rgba(255,255,255,0.15);padding:15px;border-radius:10px;border-left:4px solid #4ecdc4\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\"><span style=\"background:#4ecdc4;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem\">🌐</span>API Gateway</div><div style=\"font-size:1.2rem;font-weight:700\">~$0.0035/hr</div><div style=\"font-size:0.8rem;opacity:0.9\">$3.50 per million calls</div></div><div style=\"background:rgba(255,255,255,0.15);padding:15px;border-radius:10px;border-left:4px solid #45b7d1\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\"><span style=\"background:#45b7d1;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem\">📊</span>DynamoDB</div><div style=\"font-size:1.2rem;font-weight:700\">~$0.0003/hr</div><div style=\"font-size:0.8rem;opacity:0.9\">On-demand, 50% price reduction</div></div><div style=\"background:rgba(255,255,255,0.15);padding:15px;border-radius:10px;border-left:4px solid #96ceb4\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\"><span style=\"background:#96ceb4;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem\">📦</span>S3 + Logs</div><div style=\"font-size:1.2rem;font-weight:700\">~$0.005/hr</div><div style=\"font-size:0.8rem;opacity:0.9\">Storage + CloudWatch logging</div></div></div><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px;margin-top:20px;text-align:center\"><div style=\"display:flex;justify-content:space-around;flex-wrap:wrap;gap:15px\"><div><div style=\"font-weight:600;font-size:0.9rem\">Development</div><div style=\"font-size:1.1rem;font-weight:700\">$2.16/mo</div></div><div><div style=\"font-weight:600;font-size:0.9rem\">Production</div><div style=\"font-size:1.1rem;font-weight:700\">$3.60/mo</div></div><div><div style=\"font-weight:600;font-size:0.9rem\">Free Tier</div><div style=\"font-size:1.1rem;font-weight:700\">~$0/mo</div></div></div></div><div style=\"text-align:center;margin-top:15px;font-size:0.85rem;opacity:0.8\">✅ Serverless • ✅ Pay-per-use • ✅ Scales to zero</div></div>",
-    
-    "estimatedSetupTime":100,
+    "estimatedCost": "Free Tier Eligible",
+    "estimatedTimeString": "Setup time: 2-3 minutes",
+    "estimatedSetupTime": 150,
+    "requiredModels": [],
+    "costDetailsHTML": "<div style=\"max-width:700px;margin:20px auto;background:linear-gradient(135deg,#232f3e 0%,#37475a 100%);border-radius:15px;padding:25px;color:white;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.2)\"><div style=\"text-align:center;margin-bottom:20px\"><h3 style=\"margin:0 0 10px 0;font-size:1.8rem;font-weight:700\">Serverless Chatbot</h3><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px\"><div style=\"font-size:2.2rem;font-weight:900;margin:0\">Free Tier Eligible</div><div style=\"font-size:1.1rem;opacity:0.9\">+ Bedrock Usage Fees</div></div></div><div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:15px\"><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #FF9900\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">λ AWS Lambda</div><div style=\"font-size:1.2rem;font-weight:700\">Usage Based</div><div style=\"font-size:0.8rem;opacity:0.9\">First 1 million requests per month are free. Very low cost for text processing.</div></div><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #22c55e\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">🧠 Amazon Bedrock</div><div style=\"font-size:1.2rem;font-weight:700\">Per Token</div><div style=\"font-size:0.8rem;opacity:0.9\">You pay for the amount of text you send and receive from the AI model.</div></div><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #3b82f6\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">⚡ Amazon DynamoDB</div><div style=\"font-size:1.2rem;font-weight:700\">Free (25GB)</div><div style=\"font-size:0.8rem;opacity:0.9\">Always Free Tier includes 25GB of storage and 200M requests per month.</div></div></div><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px;margin-top:20px\"><div style=\"font-weight:600;margin-bottom:10px;font-size:1rem\">💡 Cost Saving Tips</div><div style=\"display:grid;grid-template-columns:1fr;gap:10px;font-size:0.85rem\"><div>• <strong>Models:</strong> Different AI models have different prices. Lighter models are cheaper and faster.</div><div>• <strong>Scale to Zero:</strong> Because this is serverless, you pay $0.00 if no one is using the chatbot.</div></div></div></div>",
     "templates": [
         {
-            "name":"template.yaml",
-            "inputs":[],
+            "name": "template.yaml",
+            "inputs": [],
             "outputs": []
         }
     ]
