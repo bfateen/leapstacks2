@@ -298,7 +298,7 @@
         {
             "name": "AWS Identity and Access Management (IAM)",
             "term": "iam",
-            "term_alt": "AWS IAM",
+            "term_alt": "AWS Identity and Access Management (IAM)",
             "videoURL": "https://www.youtube.com/embed/C1MnZYziA8k",
             "description": "AWS IAM enables you to securely control access to AWS services and resources. You can create and manage AWS users and groups, and use permissions to allow and deny their access to AWS resources.",
             "pricing": "IAM is a feature of your AWS account offered at no additional charge.",
