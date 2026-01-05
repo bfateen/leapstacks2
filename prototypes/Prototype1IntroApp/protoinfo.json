@@ -1,31 +1,47 @@
 {
   "title": "Photo Gallery",
-  "name": "Photo Gallery",
-  "description": "A simple photo gallery to learn AWS S3 object storage",
-  "fulldescription": "This beginner-friendly application teaches you the fundamentals of AWS S3 (Simple Storage Service) - the most essential AWS service for storing and retrieving files. Upload photos through a beautiful web interface, view them in a gallery, and learn how object storage works. Perfect for understanding buckets, objects, presigned URLs, and CORS configuration. This is the foundation you'll use in almost every AWS project.",
+  "description": "A serverless photo gallery to upload and view images using cloud storage.",
+  "fulldescription": "This prototype launches a personal photo gallery application. It uses Amazon S3 to securely store your images and host the website interface. AWS Lambda functions manage the backend logic, generating secure temporary links (presigned URLs) so you can upload and view private photos without making the bucket public. Amazon API Gateway sits in front of the logic to handle web requests. It demonstrates the core pattern of handling file uploads and downloads in a cloud-native way.",
   "icon": "leapai_web.png",
-  "videoUrl": "https://www.youtube.com/embed/video-id",
-  "applicationName": "PhotoGallery",
-  "estimatedCost": "$0.00 - $0.25/month",
-  "estimatedSetupTime": 45,
+  "videoUrl": "Proto3.mp4",
   "services": [
     {
       "name": "S3",
-      "desc": "Simple Storage Service - AWS's object storage for storing and retrieving any amount of data. Your photos are stored as 'objects' in 'buckets'."
+      "desc": "Stores the uploaded photos and the web interface files."
     },
     {
-      "name": "Lambda",
-      "desc": "Serverless compute that runs your code without managing servers. Handles photo uploads, lists, and deletions automatically."
+      "name": "AWS Lambda",
+      "desc": "Runs the code to generate secure upload links and list your photos."
     },
     {
-      "name": "API Gateway",
-      "desc": "Creates RESTful APIs that connect your frontend to Lambda. Provides endpoints for photo operations with proper CORS support."
+      "name": "Amazon API Gateway",
+      "desc": "Provides the API endpoints for the frontend to communicate with the backend."
+    },
+    {
+      "name": "AWS Identity and Access Management (IAM)",
+      "desc": "Manages security permissions to allow the functions to access specific buckets."
     }
   ],
+  "estimatedCost": "Free Tier Eligible",
+  "estimatedTimeString": "Setup time: 2-4 minutes",
+  "estimatedSetupTime": 180,
+  "requiredModels": [],
   "custom_outputs": [
     {
+      "id": "FrontendURL",
+      "title": "Open Gallery"
+    },
+    {
       "id": "PhotoStorageBucketLink",
-      "title": "View Photos in S3 Console"
+      "title": "View Photos Bucket"
+    }
+  ],
+  "costDetailsHTML": "<div style=\"max-width:700px;margin:20px auto;background:linear-gradient(135deg,#232f3e 0%,#37475a 100%);border-radius:15px;padding:25px;color:white;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.2)\"><div style=\"text-align:center;margin-bottom:20px\"><h3 style=\"margin:0 0 10px 0;font-size:1.8rem;font-weight:700\">Serverless Photo Gallery</h3><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px\"><div style=\"font-size:2.2rem;font-weight:900;margin:0\">Free Tier Eligible</div><div style=\"font-size:1.1rem;opacity:0.9\">or ~$0.00 for low usage</div></div></div><div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:15px\"><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #FF9900\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">📦 Amazon S3</div><div style=\"font-size:1.2rem;font-weight:700\">$0.023/GB</div><div style=\"font-size:0.8rem;opacity:0.9\">Free Tier includes 5GB of standard storage. You only pay for the storage you use.</div></div><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #3b82f6\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">λ AWS Lambda</div><div style=\"font-size:1.2rem;font-weight:700\">Negligible</div><div style=\"font-size:0.8rem;opacity:0.9\">Costs are based on the number of uploads/views. First 1M requests/month are free.</div></div><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #22c55e\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">🌐 API Gateway</div><div style=\"font-size:1.2rem;font-weight:700\">Free Tier</div><div style=\"font-size:0.8rem;opacity:0.9\">Includes 1 million API calls per month for the first 12 months.</div></div></div><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px;margin-top:20px\"><div style=\"font-weight:600;margin-bottom:10px;font-size:1rem\">💡 Cost Saving Tips</div><div style=\"display:grid;grid-template-columns:1fr;gap:10px;font-size:0.85rem\"><div>• <strong>Storage:</strong> The primary cost driver is the amount of data stored in S3.</div><div>• <strong>Cleanup:</strong> Deleting the stack will automatically remove the buckets and all photos to prevent future charges.</div></div></div></div>",
+  "templates": [
+    {
+      "name": "template.yaml",
+      "inputs": [],
+      "outputs": []
     }
   ]
 }
