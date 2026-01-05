@@ -1805,7 +1805,9 @@ Resources:
 
   FrontendUploaderFunction:
     Type: AWS::Lambda::Function
-    DependsOn: EditorAPIDeployment
+    DependsOn: 
+      - EditorAPIDeployment
+      - FrontendBucket
     Properties:
       Handler: index.handler
       Role: !GetAtt FrontendUploaderRole.Arn
@@ -1816,40 +1818,58 @@ Resources:
           import json
           import logging
           import urllib.request
+          import traceback
           import boto3
 
           log = logging.getLogger(__name__)
           log.setLevel(logging.INFO)
-          s3 = boto3.client('s3')
 
-          def send(event, context, status, data=None, reason=None, physical_id=None):
-            body = {
-              'Status': status,
-              'Reason': reason or f"See CloudWatch Log Stream: {getattr(context, 'log_stream_name', 'N/A')}",
-              'PhysicalResourceId': physical_id or getattr(context, 'log_stream_name', 'frontend-uploader'),
-              'StackId': event['StackId'],
-              'RequestId': event['RequestId'],
-              'LogicalResourceId': event['LogicalResourceId'],
-              'NoEcho': False,
-              'Data': data or {}
-            }
-            payload = json.dumps(body).encode('utf-8')
-            req = urllib.request.Request(
-              event['ResponseURL'], data=payload, method='PUT',
-              headers={'content-type': '', 'content-length': str(len(payload))}
-            )
-            with urllib.request.urlopen(req) as resp:
-              log.info("Sent CFN response: %s", resp.status)
+          def send_response(event, context, status, data=None, reason=None, physical_id=None):
+              """Send response to CloudFormation"""
+              try:
+                  body = {
+                      'Status': status,
+                      'Reason': reason or f"See CloudWatch Log Stream: {getattr(context, 'log_stream_name', 'N/A')}",
+                      'PhysicalResourceId': physical_id or getattr(context, 'log_stream_name', 'frontend-uploader'),
+                      'StackId': event['StackId'],
+                      'RequestId': event['RequestId'],
+                      'LogicalResourceId': event['LogicalResourceId'],
+                      'NoEcho': False,
+                      'Data': data or {}
+                  }
+                  payload = json.dumps(body).encode('utf-8')
+                  log.info(f"Sending response: {body}")
+                  req = urllib.request.Request(
+                      event['ResponseURL'], 
+                      data=payload, 
+                      method='PUT',
+                      headers={'content-type': '', 'content-length': str(len(payload))}
+                  )
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      log.info(f"CFN response sent successfully: {resp.status}")
+              except Exception as e:
+                  log.error(f"Failed to send CFN response: {str(e)}")
+                  log.error(traceback.format_exc())
 
           def handler(event, context):
-            try:
-              req_type = event.get('RequestType')
-              props = event.get('ResourceProperties', {})
-              bucket = props['BucketName']
+              log.info(f"Received event: {json.dumps(event)}")
+              
+              try:
+                  req_type = event.get('RequestType')
+                  props = event.get('ResourceProperties', {})
+                  bucket = props.get('BucketName')
+                  
+                  if not bucket:
+                      send_response(event, context, 'FAILED', {}, 'BucketName not provided')
+                      return
+                  
+                  s3 = boto3.client('s3')
 
-              if req_type in ('Create', 'Update'):
-                api_endpoint = props['ApiEndpoint']
-                html = f"""<!doctype html>
+                  if req_type in ('Create', 'Update'):
+                      api_endpoint = props.get('ApiEndpoint', '')
+                      log.info(f"Uploading to bucket: {bucket}, API endpoint: {api_endpoint}")
+                      
+                      html = f"""<!doctype html>
           <html><head>
             <meta charset="utf-8"/>
             <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
@@ -1902,39 +1922,49 @@ Resources:
               document.getElementById('load').onclick=loadCode;
               document.getElementById('deploy').onclick=deploy;
 
-              window.addEventListener('DOMContentLoaded', function() {
-                // Page loaded
+              window.addEventListener('DOMContentLoaded', function() {{
                 loadCode();
-              });
+              }});
             </script>
           </body></html>"""
+                      
+                      # Upload/overwrite editor page
+                      s3.put_object(Bucket=bucket, Key='index.html', Body=html.encode('utf-8'), ContentType='text/html')
+                      log.info("Successfully uploaded index.html")
+                      
+                      # Presign for convenience (7 days)
+                      presigned = s3.generate_presigned_url('get_object', Params={'Bucket': bucket, 'Key': 'index.html'}, ExpiresIn=604800)
+                      log.info(f"Generated presigned URL: {presigned[:50]}...")
+                      
+                      send_response(event, context, 'SUCCESS', {'EditorURL': presigned})
+                      return
 
-                
-                # Upload/overwrite editor page
-                s3.put_object(Bucket=bucket, Key='index.html', Body=html.encode('utf-8'), ContentType='text/html')
-                # Presign for convenience (7 days)
-                presigned = s3.generate_presigned_url('get_object', Params={'Bucket': bucket, 'Key': 'index.html'}, ExpiresIn=604800)
-                send(event, context, 'SUCCESS', {'EditorURL': presigned})
-                return
+                  if req_type == 'Delete':
+                      # Best-effort cleanup; always send a response
+                      try:
+                          s3.delete_object(Bucket=bucket, Key='index.html')
+                          log.info("Successfully deleted index.html")
+                      except Exception as e:
+                          log.warning(f"Delete index.html failed (may not exist): {e}")
+                      send_response(event, context, 'SUCCESS', {})
+                      return
 
-              if req_type == 'Delete':
-                # Best-effort cleanup; always send a response
-                try:
-                  s3.delete_object(Bucket=bucket, Key='index.html')
-                except Exception as e:
-                  log.warning("Delete index.html failed: %s", e)
-                send(event, context, 'SUCCESS', {})
-                return
-
-              # Fallback (unknown RequestType)
-              send(event, context, 'SUCCESS', {})
-            except Exception as e:
-              log.exception("Custom resource error")
-              send(event, context, 'FAILED', {}, str(e))
+                  # Fallback (unknown RequestType)
+                  log.warning(f"Unknown RequestType: {req_type}")
+                  send_response(event, context, 'SUCCESS', {})
+                  
+              except Exception as e:
+                  log.error(f"Custom resource error: {str(e)}")
+                  log.error(traceback.format_exc())
+                  send_response(event, context, 'FAILED', {}, str(e))
 
 
   UploadFrontend:
     Type: Custom::UploadFrontend
+    DependsOn:
+      - FrontendBucket
+      - FrontendUploaderFunction
+      - EditorAPIDeployment
     Properties:
       ServiceToken: !GetAtt FrontendUploaderFunction.Arn
       BucketName: !Ref FrontendBucket
