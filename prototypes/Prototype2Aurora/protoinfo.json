@@ -1,43 +1,65 @@
 {
-    "title": "Agent chat with documents via Aurora",
-    "description": "A full-stack RAG application that enables intelligent document interactions.",
-    "fulldescription": "A full-stack application that enables intelligent document interactions using Amazon Bedrock's Knowledge Base and Agent capabilities. This prototype demonstrates Retrieval-Augmented Generation (RAG) on Amazon Bedrock for building AI-powered document question-answering systems.",
+    "title": "Knowledge Base (RAG)",
+    "description": "Chat with your documents using a secure vector database and AI agents.",
+    "fulldescription": "This prototype builds a powerful search-and-answer system using Retrieval Augmented Generation (RAG). It uses Amazon Bedrock Agents to understand questions and a Knowledge Base to find answers in your documents. The documents are stored in Amazon Aurora, a high-performance database that acts as a vector store to find the most relevant information using logical comparisons. It includes a chat interface where you can upload files to S3, sync them to the database, and ask questions immediately.",
     "icon": "leapai_docs.png",
     "videoUrl": "Proto2.mp4",
     "services": [
         {
-            "name":"S3",
-            "desc":""
+            "name": "Amazon Bedrock",
+            "desc": "Orchestrates the agent and manages the Knowledge Base for document retrieval."
+        },
+        {
+            "name": "Amazon Aurora",
+            "desc": "A relational database running in Serverless mode to store document vectors."
+        },
+        {
+            "name": "S3",
+            "desc": "Stores the source documents (PDFs, text files) for the Knowledge Base."
+        },
+        {
+            "name": "Lambda",
+            "desc": "Handles database initialization and connects the API to the Agent."
+        },
+        {
+            "name": "Amazon DynamoDB",
+            "desc": "Stores chat logs and conversation history."
         },
         {
             "name": "API Gateway",
-            "desc": ""
-        },{
-            "name": "Lambda",
-            "desc": ""
-        },{
-            "name": "Bedrock",
-            "desc": ""
+            "desc": "Provides the secure endpoint for the chat interface."
+        },
+        {
+            "name": "AWS Secrets Manager",
+            "desc": "Securely stores the database credentials."
         }
     ],
-    "estimatedCost": "$0.24/hr",
-     "nextStepsHTML":"",
-
-    "estimatedTimeString": "Setup time: 7 minutes",
-    "costDetailsHTML":"<div style=\"max-width:700px;margin:20px auto;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);border-radius:15px;padding:25px;color:white;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.2)\"><div style=\"text-align:center;margin-bottom:20px\"><h3 style=\"margin:0 0 10px 0;font-size:1.8rem;font-weight:700\">AWS RAG Chat Application</h3><div style=\"background:rgba(255,255,255,0.2);padding:15px;border-radius:10px\"><div style=\"font-size:2.2rem;font-weight:900;margin:0\">$0.24+/hr</div><div style=\"font-size:1.1rem;opacity:0.9\">~$173+/month</div><div style=\"font-size:0.85rem;margin-top:8px;font-style:italic\">*Base infrastructure + usage-based AI costs</div></div></div><div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:15px\"><div style=\"background:rgba(255,255,255,0.15);padding:15px;border-radius:10px;border-left:4px solid #ff6b6b\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\"><span style=\"background:#ff6b6b;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem\">🔍</span>OpenSearch</div><div style=\"font-size:1.2rem;font-weight:700\">$0.24/hr</div><div style=\"font-size:0.8rem;opacity:0.9\">Dev mode: 1 OCU minimum</div></div><div style=\"background:rgba(255,255,255,0.15);padding:15px;border-radius:10px;border-left:4px solid #4ecdc4\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\"><span style=\"background:#4ecdc4;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem\">🧠</span>Bedrock AI</div><div style=\"font-size:1.2rem;font-weight:700\">Usage-based</div><div style=\"font-size:0.8rem;opacity:0.9\">Nova Pro: $0.80/M input tokens</div></div><div style=\"background:rgba(255,255,255,0.15);padding:15px;border-radius:10px;border-left:4px solid #45b7d1\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\"><span style=\"background:#45b7d1;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem\">λ</span>Lambda + API</div><div style=\"font-size:1.2rem;font-weight:700\">$0/hr idle</div><div style=\"font-size:0.8rem;opacity:0.9\">Pay per request only</div></div><div style=\"background:rgba(255,255,255,0.15);padding:15px;border-radius:10px;border-left:4px solid #96ceb4\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\"><span style=\"background:#96ceb4;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem\">📊</span>Storage</div><div style=\"font-size:1.2rem;font-weight:700\">~$0.0005/hr</div><div style=\"font-size:0.8rem;opacity:0.9\">S3 + DynamoDB + Secrets</div></div></div><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px;margin-top:20px\"><div style=\"font-weight:600;margin-bottom:10px;font-size:1rem\">💡 Usage Scenarios & Estimated Costs</div><div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;font-size:0.85rem\"><div><strong>Idle/Testing:</strong><br>~$173/month<br>Base infrastructure only</div><div><strong>Light Usage:</strong><br>~$200-300/month<br>1K queries/day</div><div><strong>Production:</strong><br>~$500-1000/month<br>10K+ queries/day</div></div></div><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px;margin-top:15px\"><div style=\"font-weight:600;margin-bottom:8px;font-size:0.95rem\">⚠️ Key Cost Insights</div><div style=\"font-size:0.8rem;line-height:1.4\">• OpenSearch Serverless <strong>dev mode: 1 OCU</strong> ($0.24/hr)<br>• Bedrock costs scale with usage: Nova Pro at $0.80/$3.20 per M tokens<br>• Most services are pay-per-use with $0 idle cost<br>• Production mode would double OpenSearch cost to $0.48/hr</div></div><div style=\"text-align:center;margin-top:15px;font-size:0.85rem;opacity:0.8\">🎯 Cost-Optimized RAG • 🤖 Nova Pro Agent • 📚 Serverless Architecture</div></div>",
-    "estimatedSetupTime":500,
+    "estimatedCost": "~$0.06/hr + usage",
+    "estimatedTimeString": "Setup time: 8-12 minutes",
+    "estimatedSetupTime": 720,
+    "requiredModels": [
+        "amazon.titan-embed-text-v1"
+    ],
+    "custom_outputs": [
+        {
+            "id": "FrontendURL",
+            "title": "Open Chat Interface"
+        },
+        {
+            "id": "S3BucketLink",
+            "title": "View Data Source Bucket"
+        },
+        {
+            "id": "KnowledgeBaseLink",
+            "title": "View Knowledge Base"
+        }
+    ],
+    "costDetailsHTML": "<div style=\"max-width:700px;margin:20px auto;background:linear-gradient(135deg,#232f3e 0%,#37475a 100%);border-radius:15px;padding:25px;color:white;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.2)\"><div style=\"text-align:center;margin-bottom:20px\"><h3 style=\"margin:0 0 10px 0;font-size:1.8rem;font-weight:700\">RAG with Aurora</h3><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px\"><div style=\"font-size:2.2rem;font-weight:900;margin:0\">~$0.06 / hour</div><div style=\"font-size:1.1rem;opacity:0.9\">+ Model Usage Fees</div></div></div><div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:15px\"><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #FF9900\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">🛢️ Amazon Aurora</div><div style=\"font-size:1.2rem;font-weight:700\">$0.06/hr</div><div style=\"font-size:0.8rem;opacity:0.9\">Serverless v2 scales down to 0.5 ACU (Aurora Capacity Units) when idle.</div></div><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #3b82f6\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">🧠 Bedrock</div><div style=\"font-size:1.2rem;font-weight:700\">Usage Based</div><div style=\"font-size:0.8rem;opacity:0.9\">Costs for vector embedding (Titan) and agent inference (Claude/Nova).</div></div><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #22c55e\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">🔑 Secrets Manager</div><div style=\"font-size:1.2rem;font-weight:700\">$0.40/mo</div><div style=\"font-size:0.8rem;opacity:0.9\">Monthly fee per secret stored (used for database credentials).</div></div></div><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px;margin-top:20px\"><div style=\"font-weight:600;margin-bottom:10px;font-size:1rem\">💡 Cost Saving Tips</div><div style=\"display:grid;grid-template-columns:1fr;gap:10px;font-size:0.85rem\"><div>• <strong>Database:</strong> This stack has a fixed hourly cost due to the database. Delete the stack when not in use to stop charges.</div><div>• <strong>Syncing:</strong> You pay a small fee per GB when syncing documents to the Knowledge Base.</div></div></div></div>",
     "templates": [
         {
-            "name":"template.yaml",
-            "inputs":[],
+            "name": "template.yaml",
+            "inputs": [],
             "outputs": []
         }
-    ],
-    "requiredModels":["amazon.titan-embed-text-v1"],
-          "custom_outputs": [
-        {
-            "id":"S3BucketLink",
-            "title":"Put your files here"
-        }
-          ]
+    ]
 }
