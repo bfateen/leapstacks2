@@ -104,6 +104,7 @@ Resources:
 
   S3CleanupFunction:
     Type: AWS::Lambda::Function
+    DependsOn: S3CleanupRole
     Properties:
       Handler: index.handler
       Role: !GetAtt S3CleanupRole.Arn
@@ -240,6 +241,7 @@ Resources:
 
   NotesOperationsFunction:
     Type: AWS::Lambda::Function
+    DependsOn: NotesOperationsRole
     Properties:
       FunctionName: !Join
         - "-"
@@ -859,6 +861,7 @@ Resources:
 
   GetApiKeyValueFunction:
     Type: AWS::Lambda::Function
+    DependsOn: GetApiKeyValueRole
     Properties:
       Handler: index.handler
       Role: !GetAtt GetApiKeyValueRole.Arn
@@ -937,6 +940,7 @@ Resources:
     DependsOn:
       - NotesAPI
       - ApiStage
+      - FrontendUploaderRole
     Properties:
       Handler: index.handler
       Role: !GetAtt FrontendUploaderRole.Arn
