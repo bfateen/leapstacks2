@@ -1017,4 +1017,20 @@ Outputs:
     Description: ARN of the Lambda function
     Value: !GetAtt ChatFunction.Arn
 
+  IntegrationCode:
+    Description: "JavaScript snippet to connect to the backend API"
+    Value: !Sub |
+      // Frontend integration snippet
+      const connectToBackend = async (userMessage) => {
+        const response = await fetch('https://${ChatAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-Key': '${CustomAPIKey.ApiKeyValue}'
+          },
+          body: JSON.stringify({ message: userMessage })
+        });
+        const data = await response.json();
+        return data;
+      };
 
