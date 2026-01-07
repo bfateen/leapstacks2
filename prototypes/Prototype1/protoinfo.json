@@ -41,5 +41,41 @@
             "inputs": [],
             "outputs": []
         }
+    ],
+    "developerResources": [
+        {
+            "outputKey": "ApiEndpoint",
+            "label": "API Endpoint",
+            "description": "Base URL for making chat API requests",
+            "type": "url"
+        },
+        {
+            "outputKey": "LambdaFunctionName",
+            "label": "Lambda Function",
+            "description": "Name of the chat handler function - modify to customize responses",
+            "type": "text",
+            "consoleUrl": "https://console.aws.amazon.com/lambda/home?region={{region}}#/functions/{{value}}"
+        },
+        {
+            "outputKey": "DynamoDBTableName",
+            "label": "DynamoDB Table",
+            "description": "Chat logs table - query for analytics or export data",
+            "type": "text",
+            "consoleUrl": "https://console.aws.amazon.com/dynamodbv2/home?region={{region}}#table?name={{value}}"
+        },
+        {
+            "outputKey": "S3BucketName",
+            "label": "S3 Bucket",
+            "description": "Static website bucket - upload custom frontend files here",
+            "type": "text",
+            "consoleUrl": "https://s3.console.aws.amazon.com/s3/buckets/{{value}}"
+        },
+        {
+            "outputKey": "IntegrationCode",
+            "label": "Integration Code",
+            "description": "JavaScript snippet to connect your app to the backend API",
+            "type": "code",
+            "language": "javascript"
+        }
     ]
 }
