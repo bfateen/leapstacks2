@@ -12,6 +12,10 @@ Parameters:
   LatestAmiId:
     Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
     Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+  McpServerUrl:
+    Type: String
+    Default: ''
+    Description: 'Optional MCP server URL. Leave empty to disable MCP integration.'
 
 Resources:
   VPC:
@@ -141,17 +145,19 @@ Resources:
             if c.token:os.environ["AWS_SESSION_TOKEN"]=c.token
             a=FastAPI();a.add_middleware(CORSMiddleware,allow_origins=["*"],allow_methods=["*"],allow_headers=["*"])
             M=os.environ.get("MODEL_ID","amazon.nova-2-sonic-v1:0");R=os.environ.get("AWS_REGION","us-east-1");U=os.environ.get("MCP_URL","")
-            print(f"--- SERVER START [DIAGNOSTIC MODE] ---");print(f"[INIT] Model: {M} | Region: {R}")
+            print(f"--- SERVER START [DIAGNOSTIC MODE] ---");print(f"[INIT] Model: {M} | Region: {R} | MCP: {'Enabled ('+U+')' if U else 'Disabled'}")
             g=Config(endpoint_uri=f"https://bedrock-runtime.{R}.amazonaws.com",region=R,aws_credentials_identity_resolver=EnvironmentCredentialsResolver());l=BedrockRuntimeClient(config=g)
             class C:
              def __init__(Q,u):Q.url=u.strip();Q.client=httpx.AsyncClient(timeout=30.0)
              async def list_tools(Q):
-              try:print(f"[MCP] Fetching tools...");r=await Q.client.post(Q.url,json={"jsonrpc":"2.0","id":1,"method":"tools/list"});r.raise_for_status();d=r.json();t=d.get("result",{}).get("tools",[]);print(f"[MCP] Tools Found: {len(t)}");return t
+              try:
+               print(f"[MCP] Fetching tools...");r=await Q.client.post(Q.url,json={"jsonrpc":"2.0","id":1,"method":"tools/list"});r.raise_for_status();d=r.json();t=d.get("result",{}).get("tools",[]);print(f"[MCP] Tools Found: {len(t)}");return t
               except Exception as e:print(f"[MCP-ERROR] List Tools Failed: {e}");return[]
              async def call_tool(Q,n,args):
-              try:print(f"[MCP] Calling {n} with {args}");r=await Q.client.post(Q.url,json={"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":n,"arguments":args}});r.raise_for_status();d=r.json()
-              if "error" in d:return f"Tool Error: {d['error'].get('message')}"
-              c=d.get("result",{}).get("content",[]);t="\n".join([x["text"]for x in c if x.get("type")=="text"]);return t or"Success"
+              try:
+               print(f"[MCP] Calling {n} with {args}");r=await Q.client.post(Q.url,json={"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":n,"arguments":args}});r.raise_for_status();d=r.json()
+               if "error" in d:return f"Tool Error: {d['error'].get('message')}"
+               c=d.get("result",{}).get("content",[]);t="\n".join([x["text"]for x in c if x.get("type")=="text"]);return t or"Success"
               except Exception as e:return f"Error executing tool: {str(e)}"
              async def close(Q):await Q.client.aclose()
             def san(s):
@@ -172,8 +178,9 @@ Resources:
               for t in tl:cs=san(t.get("inputSchema",{}));bt.append({"toolSpec":{"name":t["name"],"description":t.get("description","")[:400],"inputSchema":{"json":cs}}})
              try:
               print("[WS] Waiting for audio...");fm=None
-              while True:d=await ws.receive_text();fm=json.loads(d)
-              if fm.get('type')=='audio':break
+              while True:
+               d=await ws.receive_text();fm=json.loads(d)
+               if fm.get('type')=='audio':break
               print("[BEDROCK] Connecting...")
               tcp={"toolConfiguration":{"tools":bt,"toolChoice":{"auto":{}}}}if bt else{}
               print(f"[DEBUG] Tool Config: {json.dumps(tcp)}")
@@ -200,40 +207,47 @@ Resources:
                   ch=json.loads(ev.value.bytes_.decode('utf-8'));e=ch.get('event',{})
                   if 'audioOutput'not in e:print(f"[RAW_EVENT] {json.dumps(e)}")
                   if 'audioOutput'in e:
-                   if not cti:p=e['audioOutput'].get('content','')
-                   if p:await ws.send_json({"type":"audio","payload":p})
+                   if not cti:
+                    p=e['audioOutput'].get('content','')
+                    if p:await ws.send_json({"type":"audio","payload":p})
                    else:print(f"[DEBUG] Audio suppressed because tool {ctn} is running.")
                   elif 'textOutput'in e:t=e['textOutput'].get('content','');print(f"[TEXT_OUTPUT] Model says: {t}")
                   elif 'toolUse'in e:tu=e['toolUse'];cti=tu.get('toolUseId');ctn=tu.get('name');ti=tu.get('input',{});cti2=json.dumps(ti)if isinstance(ti,dict)else str(ti);print(f"[TOOL_USE_EVENT] Tool: {ctn}, ID: {cti}, Input: {cti2}")
-                  elif 'contentBlockStart'in e:st2=e['contentBlockStart'].get('start',{})
-                  if 'toolUse'in st2:tu=st2['toolUse']
-                  if not cti:cti=tu['toolUseId'];ctn=tu['name'];cti2=""
-                  print(f"[TOOL_START] Detected {ctn}")
-                  elif 'contentBlockDelta'in e:d=e['contentBlockDelta'].get('delta',{})
-                  if 'toolUse'in d:cti2+=d['toolUse'].get('input',"")
+                  elif 'contentBlockStart'in e:
+                   st2=e['contentBlockStart'].get('start',{})
+                   if 'toolUse'in st2:
+                    tu=st2['toolUse']
+                    if not cti:cti=tu['toolUseId'];ctn=tu['name'];cti2=""
+                    print(f"[TOOL_START] Detected {ctn}")
+                  elif 'contentBlockDelta'in e:
+                   d=e['contentBlockDelta'].get('delta',{})
+                   if 'toolUse'in d:cti2+=d['toolUse'].get('input',"")
                   elif 'contentBlockStop'in e:
-                   if cti:print(f"[TOOL_EXEC] Executing {ctn} with: {cti2}")
-                   try:ar=json.loads(cti2)if cti2 else{}
-                   except:ar={}
-                   rs2=await mc.call_tool(ctn,ar)if mc else"No Tools";print(f"[TOOL_RESULT] {rs2[:100]}")
-                   tcn=f"tool-result-{cti}"
-                   await bs.input_stream.send(InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=json.dumps({"event":{"contentStart":{"promptName":f"p-{sid}","contentName":tcn,"type":"TOOL","role":"TOOL","toolResultInputConfiguration":{"toolUseId":cti,"type":"TEXT","textInputConfiguration":{"mediaType":"text/plain"}}}}}).encode('utf-8'))))
-                   await bs.input_stream.send(InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=json.dumps({"event":{"textInput":{"promptName":f"p-{sid}","contentName":tcn,"content":str(rs2)}}}).encode('utf-8'))))
-                   await bs.input_stream.send(InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=json.dumps({"event":{"contentEnd":{"promptName":f"p-{sid}","contentName":tcn}}}).encode('utf-8'))))
-                   print(f"[TOOL_COMPLETE] Tool result sent for {ctn}");cti=None;ctn=None;cti2=""
+                   if cti:
+                    print(f"[TOOL_EXEC] Executing {ctn} with: {cti2}")
+                    try:ar=json.loads(cti2)if cti2 else{}
+                    except:ar={}
+                    rs2=await mc.call_tool(ctn,ar)if mc else"No Tools";print(f"[TOOL_RESULT] {rs2[:100]}")
+                    tcn=f"tool-result-{cti}"
+                    await bs.input_stream.send(InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=json.dumps({"event":{"contentStart":{"promptName":f"p-{sid}","contentName":tcn,"type":"TOOL","role":"TOOL","toolResultInputConfiguration":{"toolUseId":cti,"type":"TEXT","textInputConfiguration":{"mediaType":"text/plain"}}}}}).encode('utf-8'))))
+                    await bs.input_stream.send(InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=json.dumps({"event":{"textInput":{"promptName":f"p-{sid}","contentName":tcn,"content":str(rs2)}}}).encode('utf-8'))))
+                    await bs.input_stream.send(InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=json.dumps({"event":{"contentEnd":{"promptName":f"p-{sid}","contentName":tcn}}}).encode('utf-8'))))
+                    print(f"[TOOL_COMPLETE] Tool result sent for {ctn}");cti=None;ctn=None;cti2=""
                   elif 'contentEnd'in e:
                    if not cti:await ws.send_json({"type":"status","message":"Ready"})
                except Exception as e:print(f"[LOOP_ERROR] {traceback.format_exc()}");await ws.close()
               asyncio.create_task(ol());tc+=1;cti=f"u-{sid}-{tc}"
               await bs.input_stream.send(InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=json.dumps({"event":{"contentStart":{"promptName":f"p-{sid}","contentName":cti,"type":"AUDIO","role":"USER","audioInputConfiguration":{"mediaType":"audio/lpcm","sampleRateHertz":16000,"sampleSizeBits":16,"channelCount":1,"audioType":"SPEECH","encoding":"base64"}}}}).encode('utf-8'))))
-              if fm.get('payload'):b=base64.b64decode(fm['payload'])
-              for i in range(0,len(b),1024):await bs.input_stream.send(InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=json.dumps({"event":{"audioInput":{"promptName":f"p-{sid}","contentName":cti,"content":base64.b64encode(b[i:i+1024]).decode('utf-8')}}}).encode('utf-8'))));await asyncio.sleep(0.001)
+              if fm.get('payload'):
+               b=base64.b64decode(fm['payload'])
+               for i in range(0,len(b),1024):await bs.input_stream.send(InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=json.dumps({"event":{"audioInput":{"promptName":f"p-{sid}","contentName":cti,"content":base64.b64encode(b[i:i+1024]).decode('utf-8')}}}).encode('utf-8'))));await asyncio.sleep(0.001)
               while True:
                d=await ws.receive_text();m=json.loads(d)
                if m.get('type')=='audio':
                 if m.get('payload'):
-                 try:b=base64.b64decode(m['payload'])
-                 for i in range(0,len(b),2048):await bs.input_stream.send(InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=json.dumps({"event":{"audioInput":{"promptName":f"p-{sid}","contentName":cti,"content":base64.b64encode(b[i:i+2048]).decode('utf-8')}}}).encode('utf-8'))));await asyncio.sleep(0.001)
+                 try:
+                  b=base64.b64decode(m['payload'])
+                  for i in range(0,len(b),2048):await bs.input_stream.send(InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=json.dumps({"event":{"audioInput":{"promptName":f"p-{sid}","contentName":cti,"content":base64.b64encode(b[i:i+2048]).decode('utf-8')}}}).encode('utf-8'))));await asyncio.sleep(0.001)
                  except:pass
              except WebSocketDisconnect:print("[WS] Disconnected")
              except Exception as e:print(f"[ERROR] {traceback.format_exc()}")
@@ -264,7 +278,7 @@ Resources:
             COPY s.py .
             CMD ["python","s.py"]
             Z
-            docker build -t ns .&&docker run -d --name nova-sonic-app -p 8000:8000 -e AWS_REGION=${AWS::Region} -e MODEL_ID=amazon.nova-2-sonic-v1:0 --restart always ns
+            docker build -t ns .&&docker run -d --name nova-sonic-app -p 8000:8000 -e AWS_REGION=${AWS::Region} -e MODEL_ID=amazon.nova-2-sonic-v1:0 -e MCP_URL=${McpServerUrl} --restart always ns
             sleep 15&&docker ps|grep -q nova-sonic-app&&/opt/aws/bin/cfn-signal -e 0 --stack ${AWS::StackName} --resource EC2Instance --region ${AWS::Region}||exit 1
 
   CloudFrontDistribution:
