@@ -111,7 +111,7 @@ Resources:
       ImageId: !Ref LatestAmiId
       IamInstanceProfile: !Ref EC2InstanceProfile
       MetadataOptions:
-        HttpTokens: optional
+        HttpTokens: required
         HttpPutResponseHopLimit: 2
       NetworkInterfaces:
         - GroupSet: [!Ref SecurityGroup]
