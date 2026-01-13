@@ -35,6 +35,14 @@ Parameters:
 
 
 Resources:
+
+  Mappings:
+    RegionMap:
+      us-east-1:      { Prefix: "us" }
+      us-west-2:      { Prefix: "us" }
+      eu-central-1:   { Prefix: "eu" }
+      eu-west-1:      { Prefix: "eu" }
+      ap-southeast-2: { Prefix: "ap" }
   # ============================================
   # S3 BUCKET CLEANUP RESOURCES (ADD FIRST)
   # ============================================
@@ -924,11 +932,15 @@ Resources:
         NetworkMode: PUBLIC
       ProtocolConfiguration: HTTP
       EnvironmentVariables:
-        BEDROCK_MODEL_ID: !Ref BedrockModelId
+        BEDROCK_MODEL_ID: !Sub 
+          - "${Prefix}.${BaseModel}"
+          - Prefix: !FindInMap [RegionMap, !Ref "AWS::Region", Prefix]
+            BaseModel: "anthropic.claude-3-5-sonnet-20241022-v2:0"
         AWS_REGION: !Ref AWS::Region
         AGENT_SYSTEM_PROMPT: !Ref AgentSystemPrompt
         IMAGE_DIGEST: !Ref ImageDigest
         AGENTCORE_MEMORY_ID: !GetAtt AgentCoreMemory.MemoryId
+        
 
         
       Tags:
@@ -1410,7 +1422,7 @@ Resources:
                         "app = BedrockAgentCoreApp()\n"
                         "\n"
                         "# Get configuration from environment variables\n"
-                        "model_id = os.getenv('BEDROCK_MODEL_ID', 'us.anthropic.claude-sonnet-4-20250514-v1:0')\n"
+                        "model_id = os.getenv('BEDROCK_MODEL_ID', 'anthropic.claude-3-5-sonnet-20241022-v2:0')\n"
                         "aws_region = os.getenv('AWS_REGION', 'us-west-2')\n"
                         "system_prompt = 'You are a helpful AI assistant.'\n"
                         "MEMORY_ID = os.getenv('AGENTCORE_MEMORY_ID')\n"
