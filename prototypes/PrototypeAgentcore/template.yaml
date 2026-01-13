@@ -33,17 +33,16 @@ Parameters:
     Type: String
     Default: ""
 
-Mappings:
+
+Resources:
+
+  Mappings:
     RegionMap:
       us-east-1:      { Prefix: "us" }
       us-west-2:      { Prefix: "us" }
       eu-central-1:   { Prefix: "eu" }
       eu-west-1:      { Prefix: "eu" }
       ap-southeast-2: { Prefix: "ap" }
-      
-Resources:
-
-  
   # ============================================
   # S3 BUCKET CLEANUP RESOURCES (ADD FIRST)
   # ============================================
@@ -933,10 +932,7 @@ Resources:
         NetworkMode: PUBLIC
       ProtocolConfiguration: HTTP
       EnvironmentVariables:
-        BEDROCK_MODEL_ID: !Sub 
-          - "${Prefix}.${BaseModel}"
-          - Prefix: !FindInMap [RegionMap, !Ref "AWS::Region", Prefix]
-            BaseModel: "anthropic.claude-3-5-sonnet-20241022-v2:0"
+        BEDROCK_MODEL_ID: !Ref BedrockModelId
         AWS_REGION: !Ref AWS::Region
         AGENT_SYSTEM_PROMPT: !Ref AgentSystemPrompt
         IMAGE_DIGEST: !Ref ImageDigest
