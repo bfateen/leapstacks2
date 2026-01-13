@@ -1353,6 +1353,8 @@ Resources:
           import cfnresponse
           import logging
           import time
+          from botocore.config import Config
+          import os
 
           logger = logging.getLogger()
           logger.setLevel(logging.INFO)
@@ -1360,7 +1362,16 @@ Resources:
           def delete_bucket_contents(bucket_name):
               try:
                   logger.info(f"Starting cleanup of bucket: {bucket_name}")
-                  s3 = boto3.client('s3')
+                  current_region = os.environ.get('AWS_REGION', 'us-east-1')
+        
+                  s3 = boto3.client(
+                      's3',
+                      region_name=current_region,
+                      config=Config(
+                          signature_version='s3v4',
+                          s3={'addressing_style': 'virtual'} # Ensures consistent hostname
+                      )
+                  )
                   
                   # Delete all object versions
                   paginator = s3.get_paginator('list_object_versions')
@@ -1524,11 +1535,22 @@ Resources:
         ZipFile: |
           import boto3
           import cfnresponse
+          import os
+          from botocore.config import Config
           
           def handler(event, context):
               if event['RequestType'] in ['Create', 'Update']:
                   try:
-                      s3 = boto3.client('s3')
+                      current_region = os.environ.get('AWS_REGION', 'us-east-1')
+        
+                      s3 = boto3.client(
+                          's3',
+                          region_name=current_region,
+                          config=Config(
+                              signature_version='s3v4',
+                              s3={'addressing_style': 'virtual'} # Ensures consistent hostname
+                          )
+                      )
                       bucket_name = event['ResourceProperties']['BucketName']
                       api_gateway = event['ResourceProperties']['ApiGateway']
                       aws_region = event['ResourceProperties']['AWSReg']
