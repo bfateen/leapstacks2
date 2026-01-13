@@ -161,12 +161,23 @@ Resources:
         ZipFile: |
           import boto3
           import cfnresponse
+          import os
+          from botocore.config import Config
           
           def handler(event, context):
               try:
                   if event['RequestType'] in ['Create', 'Update']:
                       bucket_name = event['ResourceProperties']['BucketName']
-                      s3 = boto3.client('s3')
+                      current_region = os.environ.get('AWS_REGION', 'us-east-1')
+        
+                      s3 = boto3.client(
+                          's3',
+                          region_name=current_region,
+                          config=Config(
+                              signature_version='s3v4',
+                              s3={'addressing_style': 'virtual'} # Ensures consistent hostname
+                          )
+                      )
                       
                       # Sample transcript content for project ownership identification
                       transcript_content = '''Meeting Transcript: Q4 Customer Authentication System Review
@@ -648,6 +659,8 @@ Resources:
           import subprocess
           import shutil
           import tempfile
+          import os
+          from botocore.config import Config
 
           def handler(event, context):
               try:
@@ -683,7 +696,16 @@ Resources:
                       shutil.make_archive('/tmp/strands-layer', 'zip', '/tmp', 'python')
                       
                       print("Uploading to S3...")
-                      s3 = boto3.client('s3')
+                      current_region = os.environ.get('AWS_REGION', 'us-east-1')
+        
+                      s3 = boto3.client(
+                          's3',
+                          region_name=current_region,
+                          config=Config(
+                              signature_version='s3v4',
+                              s3={'addressing_style': 'virtual'} # Ensures consistent hostname
+                          )
+                      )
                       bucket_name = event['ResourceProperties']['DestinationBucket']
                       s3.upload_file('/tmp/strands-layer.zip', bucket_name, 'strands-layer.zip')
                       
@@ -879,12 +901,22 @@ Resources:
           import cfnresponse
           import zipfile
           import io
-          
+          import os
+          from botocore.config import Config
 
           def handler(event, context):
               try:
                   if event['RequestType'] in ['Create', 'Update']:
-                      s3 = boto3.client('s3')
+                      current_region = os.environ.get('AWS_REGION', 'us-east-1')
+        
+                      s3 = boto3.client(
+                          's3',
+                          region_name=current_region,
+                          config=Config(
+                              signature_version='s3v4',
+                              s3={'addressing_style': 'virtual'} # Ensures consistent hostname
+                          )
+                      )
                       bucket_name = event['ResourceProperties']['DestinationBucket']
                       
                       # Real Strands Agent Implementation
@@ -1110,6 +1142,7 @@ Resources:
           import boto3
           import requests
           from mcp.server.fastmcp import FastMCP
+          from botocore.config import Config
 
           # Create FastMCP instance with stateless HTTP
           mcp = FastMCP(name="StrandsMCPServer", stateless_http=True)
@@ -1372,7 +1405,16 @@ Resources:
           def count_s3_buckets() -> str:
               """Count S3 buckets in the account"""
               try:
-                  s3 = boto3.client('s3')
+                  current_region = os.environ.get('AWS_REGION', 'us-east-1')
+        
+                  s3 = boto3.client(
+                      's3',
+                      region_name=current_region,
+                      config=Config(
+                          signature_version='s3v4',
+                          s3={'addressing_style': 'virtual'} # Ensures consistent hostname
+                      )
+                  )
                   response = s3.list_buckets()
                   bucket_count = len(response['Buckets'])
                   bucket_names = [bucket['Name'] for bucket in response['Buckets'][:5]]  # Show first 5
@@ -1417,7 +1459,16 @@ Resources:
           def read_transcript(filename: str) -> str:
               """Read transcript files from S3 transcripts folder for ownership identification"""
               try:
-                  s3 = boto3.client('s3')
+                  current_region = os.environ.get('AWS_REGION', 'us-east-1')
+        
+                  s3 = boto3.client(
+                      's3',
+                      region_name=current_region,
+                      config=Config(
+                          signature_version='s3v4',
+                          s3={'addressing_style': 'virtual'} # Ensures consistent hostname
+                      )
+                  )
                   bucket_name = os.environ.get('ARTIFACTS_BUCKET')
                   
                   if not bucket_name:
@@ -1466,7 +1517,16 @@ Resources:
           def list_transcripts() -> str:
               """List all available transcript files in the S3 transcripts folder"""
               try:
-                  s3 = boto3.client('s3')
+                  current_region = os.environ.get('AWS_REGION', 'us-east-1')
+        
+                  s3 = boto3.client(
+                      's3',
+                      region_name=current_region,
+                      config=Config(
+                          signature_version='s3v4',
+                          s3={'addressing_style': 'virtual'} # Ensures consistent hostname
+                      )
+                  )
                   bucket_name = os.environ.get('ARTIFACTS_BUCKET')
                   
                   if not bucket_name:
@@ -2020,11 +2080,22 @@ Resources:
         ZipFile: |
           import boto3
           import cfnresponse
+          import os
+          from botocore.config import Config
           
           def handler(event, context):
               if event['RequestType'] in ['Create', 'Update']:
                   try:
-                      s3 = boto3.client('s3')
+                      current_region = os.environ.get('AWS_REGION', 'us-east-1')
+        
+                      s3 = boto3.client(
+                          's3',
+                          region_name=current_region,
+                          config=Config(
+                              signature_version='s3v4',
+                              s3={'addressing_style': 'virtual'} # Ensures consistent hostname
+                          )
+                      )
                       bucket_name = event['ResourceProperties']['BucketName']
                       api_gateway = event['ResourceProperties']['ApiGateway']
                       aws_region = event['ResourceProperties']['AWSReg']
