@@ -33,16 +33,17 @@ Parameters:
     Type: String
     Default: ""
 
-
-Resources:
-
-  Mappings:
+Mappings:
     RegionMap:
       us-east-1:      { Prefix: "us" }
       us-west-2:      { Prefix: "us" }
       eu-central-1:   { Prefix: "eu" }
       eu-west-1:      { Prefix: "eu" }
       ap-southeast-2: { Prefix: "ap" }
+      
+Resources:
+
+  
   # ============================================
   # S3 BUCKET CLEANUP RESOURCES (ADD FIRST)
   # ============================================
