@@ -12,7 +12,7 @@ Parameters:
   BedrockModelId:
     Type: String
     Description: Bedrock model ID to use
-    Default: us.anthropic.claude-sonnet-4-20250514-v1:0
+    Default: USERSELMODEL
 
   AgentSystemPrompt:
     Type: String
@@ -419,7 +419,7 @@ Resources:
                   app = BedrockAgentCoreApp()
 
                   # Get configuration from environment variables
-                  model_id = os.getenv('BEDROCK_MODEL_ID', 'us.anthropic.claude-sonnet-4-20250514-v1:0')
+                  model_id = os.getenv('BEDROCK_MODEL_ID', 'anthropic.claude-3-5-sonnet-20240620-v1:0')
                   aws_region = os.getenv('AWS_REGION', 'us-west-2')
                   system_prompt = 'You are a helpful AI assistant called derik, always introduce yourself.'
                   MEMORY_ID = os.getenv('AGENTCORE_MEMORY_ID')
