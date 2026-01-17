@@ -1588,37 +1588,36 @@ Resources:
                                 overflow: hidden;
                             }
 
-                            /* Fixed Header from H1 */
-                            h1 {
-                                position: absolute;
-                                width: 90%;
-                                max-width: 700px;
-                                height: var(--header-height);
-                                background: var(--v2-header-bg);
-                                color: white;
-                                margin: 0;
-                                display: flex;
-                                flex-direction: column;
-                                /* Stack title and subtext */
-                                align-items: center;
-                                justify-content: center;
-                                font-size: 16px;
-                                font-weight: 600;
-                                border-radius: 16px 16px 0 0;
-                                z-index: 20;
-                                /* Pulls it flush with the top of the chat-container */
-                                top: calc(50% - 292px);
-                                box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-                            }
+                              h1 {
+                              position: absolute;
+                              width: 90%;
+                              max-width: 700px;
+                              height: var(--header-height);
+                              background: var(--v2-header-bg);
+                              color: white;
+                              margin: 0;
+                              display: flex;
+                              flex-direction: row;
+                              align-items: center;
+                              justify-content: space-between;
+                              padding: 0 25px;
+                              box-sizing: border-box;
+                              border-radius: 16px 16px 0 0;
+                              z-index: 20;
+                              top: calc(50% - 292px);
+                              box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+                              font-size:18px;
+                          }
 
-                            /* Subtext Injection */
-                            h1::after {
-                                content: "Powered by Amazon Bedrock";
-                                font-size: 11px;
-                                font-weight: 400;
-                                opacity: 0.9;
-                                margin-top: 4px;
-                            }
+                          h1::after {
+                              content: "Powered by Amazon Bedrock";
+                              font-size: 10px;
+                              font-weight: 400;
+                              opacity: 0.8;
+                              position: absolute;
+                              bottom: 10px;
+                              left: 25px;
+                          }
 
                             #chat-container,
                             #input-container {
