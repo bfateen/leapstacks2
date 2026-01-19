@@ -2612,7 +2612,7 @@ Outputs:
   
 
   AddMcpToolCode:
-    Description: "🔧 Python Code: Add New MCP Tool"
+    Description: "Python Code: Add New MCP Tool"
     Value: !Sub |
       # Example: Adding a new MCP tool to the FastMCP server
       # Add this to your McpServerFunction Lambda code
@@ -2706,5 +2706,5 @@ Outputs:
 
           # Check token usage and cost
           if "tokenUsage" in result:
-              print(f"Tokens used: {result['tokenUsage']}")
-              print(f"Estimated cost: ${result.get('estimatedCost', 0):.6f}")
+              print("Tokens used: {}".format(result['tokenUsage']))
+              print("Estimated cost: $${:.6f}".format(result.get('estimatedCost', 0)))
