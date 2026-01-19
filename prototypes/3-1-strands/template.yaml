@@ -2612,7 +2612,7 @@ Outputs:
   
 
   AddMcpToolCode:
-    Description: "Python Code: Add New MCP Tool"
+    Description: "🔧 Python Code: Add New MCP Tool"
     Value: !Sub |
       # Example: Adding a new MCP tool to the FastMCP server
       # Add this to your McpServerFunction Lambda code
@@ -2653,7 +2653,7 @@ Outputs:
       # The tool is now available to any agent calling this MCP server
 
   CallAgentCode:
-    Description: "Python Code: Call Strands Agent from Another App"
+    Description: "🤖 Python Code: Call Strands Agent from Another App"
     Value: !Sub |
       # Example: Calling the Strands Agent from Python
       import requests
@@ -2706,5 +2706,8 @@ Outputs:
 
           # Check token usage and cost
           if "tokenUsage" in result:
-              print("Tokens used: {}".format(result['tokenUsage']))
-              print("Estimated cost: $${:.6f}".format(result.get('estimatedCost', 0)))
+              tokens = result['tokenUsage']
+              cost = result.get('estimatedCost', 0)
+              print("Tokens used: " + str(tokens))
+              print("Estimated cost: $" + "{:.6f}".format(cost))
+
