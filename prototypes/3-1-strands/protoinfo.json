@@ -52,5 +52,150 @@
             "outputs": []
         }
     ],
-    "group": "Advanced Agentic Workflows"
+    "group": "Advanced Agentic Workflows",
+    "developerResources": [
+        {
+            "outputKey": "McpServerUrl",
+            "label": "MCP Server Endpoint",
+            "description": "API endpoint for the FastMCP server - call this to add or invoke MCP tools",
+            "type": "url"
+        },
+        {
+            "outputKey": "McpServerFunctionName",
+            "label": "MCP Server Function",
+            "description": "Lambda function implementing the MCP server - modify to add new tools and capabilities",
+            "type": "text",
+            "consoleUrl": "https://console.aws.amazon.com/lambda/home?region={{region}}#/functions/{{value}}"
+        },
+        {
+            "outputKey": "StrandsAgentFunctionName",
+            "label": "Strands Agent Function",
+            "description": "Lambda function running the Strands Agent - customize agent behavior and model selection",
+            "type": "text",
+            "consoleUrl": "https://console.aws.amazon.com/lambda/home?region={{region}}#/functions/{{value}}"
+        },
+        {
+            "outputKey": "EmployeeTableName",
+            "label": "Employee DynamoDB Table",
+            "description": "Employee directory data - add or modify employee records for testing",
+            "type": "text",
+            "consoleUrl": "https://console.aws.amazon.com/dynamodbv2/home?region={{region}}#table?name={{value}}"
+        },
+        {
+            "outputKey": "S3BucketName",
+            "label": "Artifacts S3 Bucket",
+            "description": "Storage for transcripts and files - upload documents for the agent to read",
+            "type": "text",
+            "consoleUrl": "https://s3.console.aws.amazon.com/s3/buckets/{{value}}"
+        },
+        {
+            "outputKey": "AddMcpToolCode",
+            "label": "Add MCP Tool Example",
+            "description": "Python code showing how to add a new tool to the MCP server",
+            "type": "code",
+            "language": "python",
+            "value": "# Example: Adding a new MCP tool to the FastMCP server
+# Add this to your McpServerFunction Lambda code
+
+from mcp.server.fastmcp import FastMCP
+
+# Initialize the MCP server
+mcp = FastMCP(\"My MCP Server\")
+
+# Add a new tool using the @mcp.tool() decorator
+@mcp.tool()
+def get_product_info(product_id: str) -> str:
+    \"\"\"
+    Retrieve product information from inventory.
+    
+    Args:
+        product_id: The unique product identifier
+        
+    Returns:
+        Product details as a JSON string
+    \"\"\"
+    # Your custom logic here
+    # Example: Query DynamoDB, call an API, etc.
+    
+    import boto3
+    import json
+    
+    dynamodb = boto3.resource('dynamodb')
+    table = dynamodb.Table('ProductsTable')
+    
+    response = table.get_item(Key={'ProductId': product_id
+            })
+    
+    if 'Item' in response:
+        return json.dumps(response['Item'
+            ])
+    else:
+        return json.dumps({\"error\": \"Product not found\"})
+
+# The tool is now available to any agent calling this MCP server"
+            },
+            {
+                "outputKey": "CallAgentCode",
+                "label": "Call Agent from Python",
+                "description": "Python code to invoke the Strands Agent from another application",
+                "type": "code",
+                "language": "python",
+                "value": "# Example: Calling the Strands Agent from Python
+import requests
+import json
+
+# Configuration
+API_ENDPOINT = \"https://your-api-id.execute-api.region.amazonaws.com/prod/agent\"
+API_KEY = \"your-api-key-here\"  # From CloudFormation outputs
+
+def chat_with_agent(message: str, session_id: str = \"default\") -> dict:
+    \"\"\"
+    Send a message to the Strands Agent and get a response.
+    
+    Args:
+        message: The user's message/question
+        session_id: Unique session identifier for conversation history
+        
+    Returns:
+        Agent response with message and metadata
+    \"\"\"
+    
+    headers = {
+        \"Content-Type\": \"application/json\",
+        \"x-api-key\": API_KEY
+                }
+    
+    payload = {
+        \"message\": message,
+        \"sessionId\": session_id
+                }
+    
+    response = requests.post(
+        API_ENDPOINT,
+        headers=headers,
+        json=payload,
+        timeout=120
+    )
+    
+    response.raise_for_status()
+    return response.json()
+
+# Example usage
+if __name__ == \"__main__\":
+    # Ask the agent a question
+    result = chat_with_agent(
+        message=\"Who is the system owner for the authentication service?\",
+        session_id=\"user-123\"
+    )
+    
+    print(\"Agent Response:\")
+    print(result.get(\"response\", \"\"))
+    
+    # Check token usage and cost
+    if \"tokenUsage\" in result:
+        print(f\"\
+Tokens used: {result['tokenUsage']}\")
+        print(f\"Estimated cost: ${result.get('estimatedCost', 0):.6f}\")"
+            }
+        ]
 }
