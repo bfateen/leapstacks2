@@ -8,7 +8,7 @@ Deploy production-ready **AI agents, RAG systems, and full-stack chatbots** to y
 
 ---
 
-## 🌉 The Problem: Production Valley of Despair
+## 🌉 Why this exists
 
 Most AI prototypes die in the **“Production Valley of Despair”** — the gap between a local demo and a secure, observable, production-grade AWS agent.
 
@@ -16,22 +16,7 @@ Web developers can usually get an agent *working*, but turning it into something
 
 **LEAP Stacks 2 bridges this gap** by providing **infrastructure-as-code** templates that install **directly into your AWS account** via a single **CloudFormation** deployment and integrate easily.
 
----
-
-## ❓ Why This Exists
-
-LEAP Stacks exists because **building AI is no longer the hard part — running it responsibly is**.
-
-Across AWS blogs, Stack Overflow threads, and developer communities, the same pattern keeps appearing:
-
-- “It works on my laptop” agents fall apart in production  
-- Costs are unpredictable and hard to attribute  
-- Debugging multi-step, tool-using agents is painful  
-- AWS setups sprawl across services before value is proven  
-
-AWS is actively addressing this with AgentCore, Strands, managed runtimes, and better observability — but **developers still need an opinionated starting point**.
-
-LEAP Stacks is that starting point.
+The 12 included stacks launch instantly, can be used as standalone full-stack applications, or they can connect with each other like lego blocks to build larger web applications.
 
 It gives you a **real, production-shaped system on day one**, so you can:
 - Learn by interacting with a live system (not diagrams)
@@ -44,7 +29,7 @@ It gives you a **real, production-shaped system on day one**, so you can:
 
 ---
 
-## 🔥 Why LEAP Stacks v2?
+## 🔥 What's in LEAP Stacks v2?
 
 - ⚡ **Zero-to-Production in minutes**  
   Single-click deployment. No CLI, CDK, or Terraform required.
