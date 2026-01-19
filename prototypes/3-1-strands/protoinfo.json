@@ -87,6 +87,20 @@
       "description": "Storage for transcripts and files - upload documents for the agent to read",
       "type": "text",
       "consoleUrl": "https://s3.console.aws.amazon.com/s3/buckets/{{value}}"
+    },
+    {
+        "outputKey": "AddMcpToolCode",
+        "label": "Add MCP Tool Example",
+        "description": "Python code showing how to add a new tool to the MCP server",
+        "type": "code",
+        "language": "python"
+    },
+    {
+        "outputKey": "CallAgentCode",
+        "label": "Call Agent from Python",
+        "description": "Python code to invoke the Strands Agent from another application",
+        "type": "code",
+        "language": "python"
     }
   ]
 }
