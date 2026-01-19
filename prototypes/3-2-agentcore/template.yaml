@@ -5,7 +5,7 @@ Parameters:
   AgentName:
     Type: String
     Description: 'Name of the Strands agent (letters, numbers, underscores only; must start with letter; max 48 chars)'
-    Default: myagentleap123
+    Default: myagentleap3
     AllowedPattern: '[a-zA-Z][a-zA-Z0-9_]{0,47}'
     ConstraintDescription: 'Must start with a letter and contain only letters, numbers, and underscores (max 48 characters)'
 
@@ -407,37 +407,40 @@ Resources:
                   else
                     echo "Using default template code"
                     cat > my_agent.py << 'AGENT_EOF'
-                  # Strands Agent Code
-                  # Strands Agent Code
+                  # strands_agent_streaming.py
+
                   from bedrock_agentcore.runtime import BedrockAgentCoreApp
                   from strands import Agent
                   from strands.models import BedrockModel
                   import os
+                  import json
+                  import time
+                  import logging
                   import traceback
 
-                  # Initialize the AgentCore app
+                  logger = logging.getLogger()
+                  logger.setLevel(logging.INFO)
+
                   app = BedrockAgentCoreApp()
 
-                  # Get configuration from environment variables
-                  model_id = os.getenv('BEDROCK_MODEL_ID', 'anthropic.claude-3-5-sonnet-20240620-v1:0')
-                  aws_region = os.getenv('AWS_REGION', 'us-west-2')
-                  system_prompt = 'You are a helpful AI assistant called derik, always introduce yourself.'
-                  MEMORY_ID = os.getenv('AGENTCORE_MEMORY_ID')
+                  model_id = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0")
+                  aws_region = os.getenv("AWS_REGION", "us-west-2")
+                  system_prompt = "You are a helpful AI assistant."
+                  MEMORY_ID = os.getenv("AGENTCORE_MEMORY_ID")
 
-                  # Configure the agent with a Bedrock model
                   model = BedrockModel(
                       model_id=model_id,
                       max_tokens=4096,
-                      temperature=0.7
+                      temperature=0.7,
                   )
 
                   agent = Agent(
                       model=model,
-                      system_prompt=system_prompt
+                      system_prompt=system_prompt,
                   )
 
-                  # Memory client - lazy initialization
                   _memory_client = None
+
 
                   def get_memory_client():
                       global _memory_client
@@ -445,35 +448,27 @@ Resources:
                           try:
                               from bedrock_agentcore.memory import MemoryClient
                               _memory_client = MemoryClient(region_name=aws_region)
-                          except Exception as e:
+                          except Exception:
                               _memory_client = False
                       return _memory_client if _memory_client is not False else None
 
+
                   def record_turn(actor_id, session_id, user_msg, assistant_msg):
                       if not MEMORY_ID:
-                          print("record_turn: No MEMORY_ID configured")
                           return
-                      
                       memory_client = get_memory_client()
                       if not memory_client:
-                          print("record_turn: Memory client not available")
                           return
-                      
                       try:
-                          print(f"record_turn: Attempting to save turn for actor={actor_id}, session={session_id}")
-                          print(f"record_turn: user_msg length={len(user_msg)}, assistant_msg length={len(assistant_msg)}")
-                          
                           memory_client.create_event(
                               memory_id=MEMORY_ID,
                               actor_id=actor_id,
                               session_id=session_id,
-                              messages=[(user_msg, 'USER'), (assistant_msg, 'ASSISTANT')]
+                              messages=[(user_msg, "USER"), (assistant_msg, "ASSISTANT")],
                           )
-                          
-                          print(f"record_turn: Successfully saved turn")
-                      except Exception as e:
-                          print(f"record_turn ERROR: {e}")
-                          traceback.print_exc()
+                      except Exception:
+                          pass
+
 
                   def retrieve_session_summary(actor_id, session_id):
                       if not MEMORY_ID:
@@ -482,136 +477,141 @@ Resources:
                       if not memory_client:
                           return None
                       try:
-                          namespace = f'/summaries/{actor_id}/{session_id}'
+                          namespace = f"/summaries/{actor_id}/{session_id}"
                           memories = memory_client.retrieve_memories(
                               memory_id=MEMORY_ID,
                               namespace=namespace,
-                              query='summarize the conversation so far'
+                              query="summarize the conversation so far",
                           )
                           items = memories or []
                           if not items:
                               return None
                           first = items[0]
-                          return first.get('content') or first.get('summary') or str(first)
+                          return first.get("content") or first.get("summary") or str(first)
                       except Exception:
                           return None
 
-                  def retrieve_recent_turns(actor_id: str, session_id: str, max_turns: int = 5):
-                      """
-                      Fetch recent conversation turns from short-term memory.
-                      This provides immediate context within the current session.
-                      """
+
+                  def retrieve_recent_turns(actor_id, session_id, max_turns=5):
                       if not MEMORY_ID:
-                          print("retrieve_recent_turns: No MEMORY_ID")
                           return []
-                      
                       memory_client = get_memory_client()
                       if not memory_client:
-                          print("Memory client not available, skipping retrieve_recent_turns")
                           return []
-
                       try:
-                          print(f"Retrieving recent turns for actor={actor_id}, session={session_id}")
-                          
                           response = memory_client.list_events(
                               memory_id=MEMORY_ID,
                               actor_id=actor_id,
                               session_id=session_id,
-                              max_results=max_turns
+                              max_results=max_turns,
                           )
-                          
-                          # Handle the response - it's a list of events
-                          events = response if isinstance(response, list) else response.get('events', [])
-                          print(f"Got {len(events)} events")
-                          
-                          # Extract turns from events
+                          events = response if isinstance(response, list) else response.get("events", [])
                           turns = []
                           for event in events:
-                              if isinstance(event, dict) and 'payload' in event:
-                                  payload = event['payload']
-                                  # payload is a list of conversational messages
+                              if isinstance(event, dict) and "payload" in event:
+                                  payload = event["payload"]
                                   for msg_obj in payload:
-                                      if isinstance(msg_obj, dict) and 'conversational' in msg_obj:
-                                          conv = msg_obj['conversational']
-                                          role = conv.get('role', 'UNKNOWN')
-                                          content = conv.get('content', {})
-                                          text = content.get('text', '') if isinstance(content, dict) else str(content)
+                                      if isinstance(msg_obj, dict) and "conversational" in msg_obj:
+                                          conv = msg_obj["conversational"]
+                                          role = conv.get("role", "UNKNOWN")
+                                          content = conv.get("content", {})
+                                          text = content.get("text", "") if isinstance(content, dict) else str(content)
                                           if text:
                                               turns.append(f"{role}: {text}")
-                          
-                          print(f"Retrieved {len(turns)} recent message(s)")
                           return turns
-                          
-                      except Exception as e:
-                          print(f"Warning: Failed to retrieve recent turns: {e}")
-                          traceback.print_exc()
+                      except Exception:
                           return []
 
-                  @app.entrypoint
-                  def invoke(payload):
+
+                  # ---- SSE helpers ----
+
+                  def sse(obj) -> str:
+                      # SSE event frame
+                      return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+
+
+                  def extract_assistant_text(result) -> str:
+                      assistant_message = None
                       try:
-                          
-                          actor_id = payload.get('actor_id') or payload.get('user_id') or 'anonymous'
-                          session_id = payload.get('session_id') or payload.get('sessionId') or 'default-session'
-                          user_message = payload.get("prompt", "Hello! How can I help you today?")
-
-                          print(f"Processing message from actor={actor_id}, session={session_id}")
-
-                          # Build context from both short-term and long-term memory
-                          context_parts = []
-                          
-                          # Get long-term summary if available
-                          summary = retrieve_session_summary(actor_id, session_id)
-                          if summary:
-                              context_parts.append(f"Previous conversation summary:\n{summary}")
-                          
-                          # Get recent conversation turns for immediate context
-                          recent_turns = retrieve_recent_turns(actor_id, session_id, max_turns=5)
-                          if recent_turns:
-                              context_parts.append(f"Recent conversation:\n" + "\n".join(recent_turns))
-                          
-                          # Build the enriched input
-                          if context_parts:
-                              enriched_input = "\n\n".join(context_parts) + f"\n\nUser: {user_message}"
-                          else:
-                              enriched_input = user_message
-                          
-                          print(f"Calling agent...")
-                          result = agent(enriched_input)
-                          
-                          # Extract text from result
-                          assistant_message = None
                           if hasattr(result, "message"):
                               message_obj = result.message
                               if isinstance(message_obj, dict):
-                                  if 'content' in message_obj and isinstance(message_obj['content'], list):
-                                      for content_block in message_obj['content']:
-                                          if isinstance(content_block, dict) and 'text' in content_block:
-                                              assistant_message = content_block['text']
+                                  if "content" in message_obj and isinstance(message_obj["content"], list):
+                                      for block in message_obj["content"]:
+                                          if isinstance(block, dict) and "text" in block:
+                                              assistant_message = block["text"]
                                               break
-                                  elif 'text' in message_obj:
-                                      assistant_message = message_obj['text']
+                                  elif "text" in message_obj:
+                                      assistant_message = message_obj["text"]
                                   else:
                                       assistant_message = str(message_obj)
                               else:
                                   assistant_message = str(message_obj)
                           else:
                               assistant_message = str(result)
-                          
-                          if not assistant_message:
-                              assistant_message = str(result)
-                          
-                          print(f"Response extracted")
-                          record_turn(actor_id, session_id, user_message, assistant_message)
-                          return assistant_message
-                          
-                      except Exception as e:
-                          print(f"ERROR: {e}")
-                          traceback.print_exc()
-                          return f"Error: {str(e)}"
+                      except Exception:
+                          assistant_message = str(result)
 
-                  if __name__ == '__main__':
+                      if not assistant_message:
+                          assistant_message = str(result)
+                      return assistant_message
+
+
+                  @app.entrypoint
+                  def invoke(payload):
+                      """
+                      IMPORTANT: This entrypoint is a generator that yields SSE frames directly.
+                      Do NOT return a dict containing a generator (AgentCore in your env stringifies it).
+                      """
+                      try:
+                          actor_id = payload.get("actor_id") or payload.get("user_id") or "anonymous"
+                          session_id = payload.get("session_id") or payload.get("sessionId") or "default-session"
+                          user_message = payload.get("prompt", "Hello! How can I help you today?")
+
+                          # Stream "thinking" steps (these should now appear in the browser via your Node proxy)
+                          yield sse({"type": "thinking", "message": "Thinking… loading memory"})
+                          time.sleep(0.7)
+
+                          context_parts = []
+                          summary = retrieve_session_summary(actor_id, session_id)
+                          if summary:
+                              context_parts.append(f"Previous conversation summary:\n{summary}")
+
+                          yield sse({"type": "thinking", "message": "Thinking… reading recent turns"})
+                          time.sleep(0.7)
+
+                          recent_turns = retrieve_recent_turns(actor_id, session_id, max_turns=5)
+                          if recent_turns:
+                              context_parts.append("Recent conversation:\n" + "\n".join(recent_turns))
+
+                          enriched_input = (
+                              "\n\n".join(context_parts) + f"\n\nUser: {user_message}"
+                              if context_parts
+                              else user_message
+                          )
+
+                          yield sse({"type": "thinking", "message": "Thinking… calling the model"})
+                          time.sleep(0.7)
+
+                          result = agent(enriched_input)
+                          assistant_message = extract_assistant_text(result)
+
+                          record_turn(actor_id, session_id, user_message, assistant_message)
+
+                          # Final answer
+                          yield sse({"type": "message", "content": assistant_message, "sessionId": session_id})
+                          yield sse({"type": "done", "sessionId": session_id})
+
+                      except Exception as e:
+                          logger.error("invoke error: %s", str(e))
+                          logger.error(traceback.format_exc())
+                          yield sse({"type": "error", "message": str(e)})
+                          yield sse({"type": "done"})
+
+
+                  if __name__ == "__main__":
                       app.run()
+
 
 
                   AGENT_EOF
@@ -927,7 +927,7 @@ Resources:
       ProtocolConfiguration: HTTP
       EnvironmentVariables:
         BEDROCK_MODEL_ID: !Ref BedrockModelId
-        AWS_REGION: !Ref AWS::Region
+
         AGENT_SYSTEM_PROMPT: !Ref AgentSystemPrompt
         IMAGE_DIGEST: !Ref ImageDigest
         AGENTCORE_MEMORY_ID: !GetAtt AgentCoreMemory.MemoryId
@@ -1368,7 +1368,7 @@ Resources:
               region_name=current_region,
               config=Config(
                   signature_version='s3v4',
-                  s3={'addressing_style': 'virtual'} # Ensures consistent hostname
+                  s3={'addressing_style': 'virtual'}
               )
           )
           cb = boto3.client('codebuild')
@@ -1394,7 +1394,6 @@ Resources:
               key = os.environ['CODE_KEY']
               backups_prefix = f"{os.environ['CODE_KEY'].rsplit('/',1)[0]}/backups/"
 
-              # ---------- GET /get-code ----------
               if path.endswith('/get-code') and method == 'GET':
                   try:
                       obj = s3.get_object(Bucket=bucket, Key=key)
@@ -1402,35 +1401,38 @@ Resources:
                   except s3.exceptions.NoSuchKey:
                       # Default template EXACTLY aligned with BuildSpec's my_agent.py
                       code = (
-                        "# Strands Agent Code\n"
+                        "# strands_agent_streaming.py\n"
+                        "\n"
                         "from bedrock_agentcore.runtime import BedrockAgentCoreApp\n"
                         "from strands import Agent\n"
                         "from strands.models import BedrockModel\n"
                         "import os\n"
+                        "import json\n"
+                        "import time\n"
+                        "import logging\n"
                         "import traceback\n"
                         "\n"
-                        "# Initialize the AgentCore app\n"
+                        "logger = logging.getLogger()\n"
+                        "logger.setLevel(logging.INFO)\n"
+                        "\n"
                         "app = BedrockAgentCoreApp()\n"
                         "\n"
-                        "# Get configuration from environment variables\n"
-                        "model_id = os.getenv('BEDROCK_MODEL_ID', 'anthropic.claude-3-5-sonnet-20241022-v2:0')\n"
-                        "aws_region = os.getenv('AWS_REGION', 'us-west-2')\n"
-                        "system_prompt = 'You are a helpful AI assistant.'\n"
-                        "MEMORY_ID = os.getenv('AGENTCORE_MEMORY_ID')\n"
+                        "model_id = os.getenv(\"BEDROCK_MODEL_ID\", \"anthropic.claude-3-5-sonnet-20241022-v2:0\")\n"
+                        "aws_region = os.getenv(\"AWS_REGION\", \"us-west-2\")\n"
+                        "system_prompt = \"You are a helpful AI assistant.\"\n"
+                        "MEMORY_ID = os.getenv(\"AGENTCORE_MEMORY_ID\")\n"
                         "\n"
-                        "# Configure the agent with a Bedrock model\n"
                         "model = BedrockModel(\n"
                         "    model_id=model_id,\n"
                         "    max_tokens=4096,\n"
-                        "    temperature=0.7\n"
+                        "    temperature=0.7,\n"
                         ")\n"
                         "\n"
                         "agent = Agent(\n"
                         "    model=model,\n"
-                        "    system_prompt=system_prompt\n"
+                        "    system_prompt=system_prompt,\n"
                         ")\n"
                         "\n"
-                        "# Memory client - lazy initialization\n"
                         "_memory_client = None\n"
                         "\n"
                         "def get_memory_client():\n"
@@ -1439,7 +1441,7 @@ Resources:
                         "        try:\n"
                         "            from bedrock_agentcore.memory import MemoryClient\n"
                         "            _memory_client = MemoryClient(region_name=aws_region)\n"
-                        "        except Exception as e:\n"
+                        "        except Exception:\n"
                         "            _memory_client = False\n"
                         "    return _memory_client if _memory_client is not False else None\n"
                         "\n"
@@ -1454,7 +1456,7 @@ Resources:
                         "            memory_id=MEMORY_ID,\n"
                         "            actor_id=actor_id,\n"
                         "            session_id=session_id,\n"
-                        "            messages=[(user_msg, 'USER'), (assistant_msg, 'ASSISTANT')]\n"
+                        "            messages=[(user_msg, \"USER\"), (assistant_msg, \"ASSISTANT\")],\n"
                         "        )\n"
                         "    except Exception:\n"
                         "        pass\n"
@@ -1466,17 +1468,17 @@ Resources:
                         "    if not memory_client:\n"
                         "        return None\n"
                         "    try:\n"
-                        "        namespace = f'/summaries/{actor_id}/{session_id}'\n"
+                        "        namespace = f\"/summaries/{actor_id}/{session_id}\"\n"
                         "        memories = memory_client.retrieve_memories(\n"
                         "            memory_id=MEMORY_ID,\n"
                         "            namespace=namespace,\n"
-                        "            query='summarize the conversation so far'\n"
+                        "            query=\"summarize the conversation so far\",\n"
                         "        )\n"
                         "        items = memories or []\n"
                         "        if not items:\n"
                         "            return None\n"
                         "        first = items[0]\n"
-                        "        return first.get('content') or first.get('summary') or str(first)\n"
+                        "        return first.get(\"content\") or first.get(\"summary\") or str(first)\n"
                         "    except Exception:\n"
                         "        return None\n"
                         "\n"
@@ -1491,77 +1493,98 @@ Resources:
                         "            memory_id=MEMORY_ID,\n"
                         "            actor_id=actor_id,\n"
                         "            session_id=session_id,\n"
-                        "            max_results=max_turns\n"
+                        "            max_results=max_turns,\n"
                         "        )\n"
-                        "        events = response if isinstance(response, list) else response.get('events', [])\n"
+                        "        events = response if isinstance(response, list) else response.get(\"events\", [])\n"
                         "        turns = []\n"
                         "        for event in events:\n"
-                        "            if isinstance(event, dict) and 'payload' in event:\n"
-                        "                payload = event['payload']\n"
+                        "            if isinstance(event, dict) and \"payload\" in event:\n"
+                        "                payload = event[\"payload\"]\n"
                         "                for msg_obj in payload:\n"
-                        "                    if isinstance(msg_obj, dict) and 'conversational' in msg_obj:\n"
-                        "                        conv = msg_obj['conversational']\n"
-                        "                        role = conv.get('role', 'UNKNOWN')\n"
-                        "                        content = conv.get('content', {})\n"
-                        "                        text = content.get('text', '') if isinstance(content, dict) else str(content)\n"
+                        "                    if isinstance(msg_obj, dict) and \"conversational\" in msg_obj:\n"
+                        "                        conv = msg_obj[\"conversational\"]\n"
+                        "                        role = conv.get(\"role\", \"UNKNOWN\")\n"
+                        "                        content = conv.get(\"content\", {})\n"
+                        "                        text = content.get(\"text\", \"\") if isinstance(content, dict) else str(content)\n"
                         "                        if text:\n"
-                        "                            turns.append(f'{role}: {text}')\n"
+                        "                            turns.append(f\"{role}: {text}\")\n"
                         "        return turns\n"
                         "    except Exception:\n"
                         "        return []\n"
                         "\n"
-                        "@app.entrypoint\n"
-                        "def invoke(payload):\n"
+                        "def sse(obj) -> str:\n"
+                        "    return f\"data: {json.dumps(obj, ensure_ascii=False)}\\n\\n\"\n"
+                        "\n"
+                        "def extract_assistant_text(result) -> str:\n"
+                        "    assistant_message = None\n"
                         "    try:\n"
-                        "        actor_id = payload.get('actor_id') or payload.get('user_id') or 'anonymous'\n"
-                        "        session_id = payload.get('session_id') or payload.get('sessionId') or 'default-session'\n"
-                        "        user_message = payload.get('prompt', 'Hello! How can I help you today?')\n"
-                        "        \n"
-                        "        context_parts = []\n"
-                        "        summary = retrieve_session_summary(actor_id, session_id)\n"
-                        "        if summary:\n"
-                        "            context_parts.append(f'Previous conversation summary:\\n{summary}')\n"
-                        "        recent_turns = retrieve_recent_turns(actor_id, session_id, max_turns=5)\n"
-                        "        if recent_turns:\n"
-                        "            context_parts.append(f\"Recent conversation:\\n\" + \"\\n\".join(recent_turns))\n"
-                        "        \n"
-                        "        if context_parts:\n"
-                        "            enriched_input = \"\\n\\n\".join(context_parts) + f\"\\n\\nUser: {user_message}\"\n"
-                        "        else:\n"
-                        "            enriched_input = user_message\n"
-                        "        \n"
-                        "        result = agent(enriched_input)\n"
-                        "        assistant_message = None\n"
-                        "        if hasattr(result, 'message'):\n"
+                        "        if hasattr(result, \"message\"):\n"
                         "            message_obj = result.message\n"
                         "            if isinstance(message_obj, dict):\n"
-                        "                if 'content' in message_obj and isinstance(message_obj['content'], list):\n"
-                        "                    for content_block in message_obj['content']:\n"
-                        "                        if isinstance(content_block, dict) and 'text' in content_block:\n"
-                        "                            assistant_message = content_block['text']\n"
+                        "                if \"content\" in message_obj and isinstance(message_obj[\"content\"], list):\n"
+                        "                    for block in message_obj[\"content\"]:\n"
+                        "                        if isinstance(block, dict) and \"text\" in block:\n"
+                        "                            assistant_message = block[\"text\"]\n"
                         "                            break\n"
-                        "                elif 'text' in message_obj:\n"
-                        "                    assistant_message = message_obj['text']\n"
+                        "                elif \"text\" in message_obj:\n"
+                        "                    assistant_message = message_obj[\"text\"]\n"
                         "                else:\n"
                         "                    assistant_message = str(message_obj)\n"
                         "            else:\n"
                         "                assistant_message = str(message_obj)\n"
                         "        else:\n"
                         "            assistant_message = str(result)\n"
-                        "        if not assistant_message:\n"
-                        "            assistant_message = str(result)\n"
-                        "        \n"
-                        "        record_turn(actor_id, session_id, user_message, assistant_message)\n"
-                        "        return assistant_message\n"
-                        "    except Exception as e:\n"
-                        "        return f'Error: {str(e)}'\n"
+                        "    except Exception:\n"
+                        "        assistant_message = str(result)\n"
+                        "    if not assistant_message:\n"
+                        "        assistant_message = str(result)\n"
+                        "    return assistant_message\n"
                         "\n"
-                        "if __name__ == '__main__':\n"
+                        "@app.entrypoint\n"
+                        "def invoke(payload):\n"
+                        "    try:\n"
+                        "        actor_id = payload.get(\"actor_id\") or payload.get(\"user_id\") or \"anonymous\"\n"
+                        "        session_id = payload.get(\"session_id\") or payload.get(\"sessionId\") or \"default-session\"\n"
+                        "        user_message = payload.get(\"prompt\", \"Hello! How can I help you today?\")\n"
+                        "\n"
+                        "        yield sse({\"type\": \"thinking\", \"message\": \"Thinking… loading memory\"})\n"
+                        "        time.sleep(0.7)\n"
+                        "        context_parts = []\n"
+                        "        summary = retrieve_session_summary(actor_id, session_id)\n"
+                        "        if summary:\n"
+                        "            context_parts.append(f\"Previous conversation summary:\\n{summary}\")\n"
+                        "\n"
+                        "        yield sse({\"type\": \"thinking\", \"message\": \"Thinking… reading recent turns\"})\n"
+                        "        time.sleep(0.7)\n"
+                        "        recent_turns = retrieve_recent_turns(actor_id, session_id, max_turns=5)\n"
+                        "        if recent_turns:\n"
+                        "            context_parts.append(\"Recent conversation:\\n\" + \"\\n\".join(recent_turns))\n"
+                        "\n"
+                        "        enriched_input = (\n"
+                        "            \"\\n\\n\".join(context_parts) + f\"\\n\\nUser: {user_message}\"\n"
+                        "            if context_parts\n"
+                        "            else user_message\n"
+                        "        )\n"
+                        "\n"
+                        "        yield sse({\"type\": \"thinking\", \"message\": \"Thinking… calling the model\"})\n"
+                        "        time.sleep(0.7)\n"
+                        "        result = agent(enriched_input)\n"
+                        "        assistant_message = extract_assistant_text(result)\n"
+                        "        record_turn(actor_id, session_id, user_message, assistant_message)\n"
+                        "\n"
+                        "        yield sse({\"type\": \"message\", \"content\": assistant_message, \"sessionId\": session_id})\n"
+                        "        yield sse({\"type\": \"done\", \"sessionId\": session_id})\n"
+                        "    except Exception as e:\n"
+                        "        logger.error(\"invoke error: %s\", str(e))\n"
+                        "        logger.error(traceback.format_exc())\n"
+                        "        yield sse({\"type\": \"error\", \"message\": str(e)})\n"
+                        "        yield sse({\"type\": \"done\"})\n"
+                        "\n"
+                        "if __name__ == \"__main__\":\n"
                         "    app.run()\n"
                       )
                   return _resp(200, {'code': code})
 
-              # ---------- POST /deploy-code ----------
               if path.endswith('/deploy-code') and method == 'POST':
                   body = json.loads(event.get('body', '{}'))
                   code = body.get('code', '')
@@ -1569,18 +1592,14 @@ Resources:
                       return _resp(400, {'error': 'code is required'})
 
                   ts = datetime.utcnow().isoformat()
-
-                  # Save active version
                   s3.put_object(Bucket=bucket, Key=key, Body=code.encode('utf-8'),
                                 ContentType='text/plain',
                                 Metadata={'timestamp': ts})
 
-                  # Save backup
                   backup_key = f"{backups_prefix}{ts}.py"
                   s3.put_object(Bucket=bucket, Key=backup_key, Body=code.encode('utf-8'),
                                 ContentType='text/plain')
 
-                  # Start build - EventBridge will handle runtime update automatically!
                   proj = os.environ['PROJECT_NAME']
                   start = cb.start_build(projectName=proj)
                   build_id = start['build']['id']
@@ -1592,7 +1611,6 @@ Resources:
                       'autoUpdate': True
                   })
 
-              # ---------- GET /list-backups (optional helper) ----------
               if path.endswith('/list-backups') and method == 'GET':
                   resp = s3.list_objects_v2(Bucket=bucket, Prefix=backups_prefix)
                   items = [{
@@ -2276,6 +2294,7 @@ Resources:
                               const messageInput = document.getElementById('message-input');
                               const chatContainer = document.getElementById('chat-container');
                               const loadingIndicator = document.getElementById('loading');
+                              const NL = String.fromCharCode(10);
                               
                               messageInput.addEventListener('keypress', function(e) {
                                   if (e.key === 'Enter') {
@@ -2284,45 +2303,131 @@ Resources:
                               });
                               
                               async function sendMessage() {
-                                  const message = messageInput.value.trim();
-                                  if (!message) return;
-                                  
-                                  messageInput.value = '';
-                                  appendMessageToChat(message, 'user');
-                                  loadingIndicator.style.display = 'block';
-                                  
-                                  try {
-                                      const response = await fetch(apiUrl, {
-                                          method: 'POST',
-                                          headers: {
-                                              'Content-Type': 'application/json'
-                                          },
-                                          body: JSON.stringify({ 
-                                              prompt: message,
-                                              sessionId: 'web-session-' + Date.now()
-                                          })
-                                      });
-                                      
-                                      const data = await response.json();
-                                      loadingIndicator.style.display = 'none';
-                                      
-                                      // Extract response text from AgentCore response
-                                      let responseText = '';
-                                      if (data.response) {
-                                          responseText = data.response;
-                                      } else if (data.output && data.output.text) {
-                                          responseText = data.output.text;
-                                      } else {
-                                          responseText = JSON.stringify(data);
-                                      }
-                                      
-                                      appendMessageToChat(responseText, 'assistant');
-                                  } catch (error) {
-                                      console.error('Error:', error);
-                                      loadingIndicator.style.display = 'none';
-                                      appendMessageToChat('Error: Failed to get response', 'assistant');
-                                  }
-                              }
+                                const message = messageInput.value.trim();
+                                if (!message) return;
+
+                                messageInput.value = '';
+                                appendMessageToChat(message, 'user');
+
+                                const sessionId = 'web-session-' + Date.now();
+                                let assistantEl = null;
+                                let thinkingEl = null;
+                                let assistantText = '';
+
+                                // Helper to find or create the current thinking bubble
+                                function updateThinking(text) {
+                                    if (!thinkingEl) {
+                                        thinkingEl = document.createElement('div');
+                                        thinkingEl.className = 'message assistant-message thinking-state';
+                                        thinkingEl.style.fontStyle = 'italic';
+                                        thinkingEl.style.opacity = '0.7';
+                                        chatContainer.appendChild(thinkingEl);
+                                    }
+                                    thinkingEl.textContent = '' + text;
+                                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                                }
+
+                                // Helper to finalize assistant message
+                                function setAssistantText(t) {
+                                    if (thinkingEl) {
+                                        thinkingEl.remove();
+                                        thinkingEl = null;
+                                    }
+                                    if (!assistantEl) {
+                                        assistantEl = appendMessageToChat('', 'assistant');
+                                    }
+                                    assistantText = t;
+                                    assistantEl.textContent = assistantText;
+                                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                                }
+
+                                try {
+                                    const response = await fetch(apiUrl, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ prompt: message, sessionId })
+                                    });
+
+                                    const reader = response.body.getReader();
+                                    const decoder = new TextDecoder('utf-8');
+                                    let buffer = '';
+                                    const NL = String.fromCharCode(10);
+
+                                    while (true) {
+                                        const { value, done } = await reader.read();
+                                        if (done) break;
+
+                                        buffer += decoder.decode(value, { stream: true });
+                                        const parts = buffer.split(NL + NL);
+                                        buffer = parts.pop() || '';
+
+                                        for (const part of parts) {
+                                            const lines = part.split(NL);
+                                            for (const line of lines) {
+                                                if (!line.startsWith('data:')) continue;
+
+                                                // 1. Remove the outer 'data:' prefix
+                                                let rawPayload = line.slice(5).trim();
+                                                if (!rawPayload) continue;
+
+                                                let evt;
+                                                try {
+                                                    // 2. Parse the outer JSON
+                                                    evt = JSON.parse(rawPayload);
+
+                                                    // 3. INTERNAL UNWRAPPING: 
+                                                    // If the parsed object is a string starting with 'data:', 
+                                                    // it means the stream is double-encoded. We must parse it again.
+                                                    if (typeof evt === 'string' && evt.startsWith('data:')) {
+                                                        const innerJson = evt.replace('data:', '').trim();
+                                                        evt = JSON.parse(innerJson);
+                                                    }
+                                                } catch (e) {
+                                                    console.error('Failed to parse:', rawPayload);
+                                                    continue;
+                                                }
+
+                                                // 4. Handle types using the unwrapped 'evt' object
+                                                if (evt.type === 'thinking') {
+                                                    updateThinking(evt.message);
+                                                }
+                                                else if (evt.type === 'error') {
+                                                    const errEl = appendMessageToChat('⚠️ ' + evt.message, 'assistant');
+                                                    errEl.style.backgroundColor = '#450a0a';
+                                                    errEl.style.border = '1px solid #991b1b';
+                                                    if (thinkingEl) thinkingEl.remove();
+                                                }
+                                                else if (evt.type === 'done') {
+                                                    if (thinkingEl) thinkingEl.remove();
+                                                    console.log("Stream complete");
+                                                }
+                                                else if (evt.type === 'message') {
+                                                    // Handle the final message with content field
+                                                    const text = evt.content || evt.text || evt.delta || '';
+                                                    if (text) {
+                                                        setAssistantText(text);
+                                                    }
+                                                }
+                                                else {
+                                                    const chunk = evt.text || evt.delta || (evt.message && evt.type !== 'thinking' ? evt.message : '');
+                                                    if (chunk) {
+                                                        if (thinkingEl) {
+                                                            thinkingEl.remove();
+                                                            thinkingEl = null;
+                                                        }
+                                                        if (!assistantEl) assistantEl = appendMessageToChat('', 'assistant');
+                                                        assistantText += chunk;
+                                                        assistantEl.textContent = assistantText;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                } catch (error) {
+                                    console.error('Error:', error);
+                                    appendMessageToChat('Error: Connection failed', 'assistant');
+                                }
+                            }
                               
                               function appendMessageToChat(messageText, senderType) {
                                   const messageElement = document.createElement('div');
@@ -2330,6 +2435,7 @@ Resources:
                                   messageElement.textContent = messageText;
                                   chatContainer.appendChild(messageElement);
                                   chatContainer.scrollTop = chatContainer.scrollHeight;
+                                  return messageElement;
                               }
                           </script>
                       </body>
@@ -2457,6 +2563,213 @@ Resources:
 
               return _resp(200, data)
 
+  # ---------------------------------------------------------------------------
+  # Real-time streaming (SSE) endpoint: /invoke-stream
+  #
+  # This uses API Gateway REST API response streaming + a response-streaming
+  # enabled Lambda to proxy AgentCore Runtime's SSE events end-to-end.
+  # ---------------------------------------------------------------------------
+
+  AgentCoreStreamProxyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AgentCoreInvokePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:InvokeAgentRuntime
+                Resource: '*'
+
+  AgentCoreStreamProxyFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AgentName}-agentcore-proxy-stream'
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt AgentCoreStreamProxyRole.Arn
+      Timeout: 60
+      MemorySize: 512
+      Environment:
+        Variables:
+          AGENT_RUNTIME_ARN: !GetAtt AgentCoreRuntime.AgentRuntimeArn
+      Code:
+        ZipFile: |
+          // AWS SDK v3 BedrockAgentCore client - included in Lambda Node.js 20 runtime
+          const { BedrockAgentCoreClient, InvokeAgentRuntimeCommand } = require('@aws-sdk/client-bedrock-agentcore');
+          const crypto = require('crypto');
+
+          function writeSse(stream, obj) {
+            stream.write(`data: ${JSON.stringify(obj)}\n\n`);
+          }
+
+          function safeJsonParse(s) {
+            try { return JSON.parse(s); } catch { return null; }
+          }
+
+          function parseBody(event) {
+            if (!event) return {};
+            if (event.body) {
+              const parsed = safeJsonParse(event.body);
+              return parsed || { prompt: event.body };
+            }
+            return {};
+          }
+
+          /**
+          * Generate a session ID that meets the minimum length requirement (33 chars)
+          */
+          function generateSessionId(providedId) {
+            if (providedId && providedId.length >= 33) {
+              return providedId.slice(0, 128);
+            }
+            
+            const uuid = crypto.randomUUID();
+            const timestamp = Date.now();
+            
+            if (providedId) {
+              return `${providedId}-${uuid}`.slice(0, 128);
+            }
+            
+            return `web-session-${timestamp}-${uuid}`.slice(0, 128);
+          }
+
+          exports.handler = awslambda.streamifyResponse(async (event, responseStream) => {
+            // CORS preflight
+            if (event?.httpMethod === "OPTIONS") {
+              const meta = {
+                statusCode: 200,
+                headers: {
+                  "Access-Control-Allow-Origin": "*",
+                  "Access-Control-Allow-Headers": "Content-Type",
+                  "Access-Control-Allow-Methods": "POST,OPTIONS"
+                }
+              };
+              responseStream = awslambda.HttpResponseStream.from(responseStream, meta);
+              writeSse(responseStream, { type: "thinking", message: "Thinking..." });
+
+              responseStream.end();
+              return;
+            }
+
+            // SSE headers for streaming response
+            const meta = {
+              statusCode: 200,
+              headers: {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Content-Type",
+                "Access-Control-Allow-Methods": "POST,OPTIONS"
+              }
+            };
+            responseStream = awslambda.HttpResponseStream.from(responseStream, meta);
+            writeSse(responseStream, { type: "thinking", message: "Thinking..." });
+            console.log("Wrote manual thinking SSE");
+
+            const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-1';
+            const agentRuntimeArn = process.env.AGENT_RUNTIME_ARN;
+
+            if (!agentRuntimeArn) {
+              writeSse(responseStream, { type: "error", message: "Missing AGENT_RUNTIME_ARN" });
+              responseStream.end();
+              return;
+            }
+
+            const body = parseBody(event);
+            const prompt = body.prompt ?? "";
+            const rawSession = body.sessionId || body.session_id;
+            const sessionId = generateSessionId(rawSession);
+
+            try {
+              const client = new BedrockAgentCoreClient({ region });
+
+              const payload = JSON.stringify({ prompt });
+              const payloadBuffer = Buffer.from(payload, 'utf-8');
+
+              const command = new InvokeAgentRuntimeCommand({
+                agentRuntimeArn: agentRuntimeArn,
+                runtimeSessionId: sessionId,
+                payload: payloadBuffer,
+                accept: 'text/event-stream',
+                contentType: 'application/json',
+              });
+
+              const response = await client.send(command);
+
+              // Handle the response
+              if (response.response) {
+                const responseBody = response.response;
+                
+                // Check if it's a streaming response (text/event-stream)
+                if (response.contentType && response.contentType.includes('text/event-stream')) {
+                  // Stream the SSE events directly
+                  if (typeof responseBody[Symbol.asyncIterator] === 'function') {
+                    for await (const chunk of responseBody) {
+                      if (Buffer.isBuffer(chunk)) {
+                        responseStream.write(chunk);
+                      } else if (chunk instanceof Uint8Array) {
+                        responseStream.write(Buffer.from(chunk));
+                      } else if (typeof chunk === 'string') {
+                        responseStream.write(chunk);
+                      }
+                    }
+                  } else if (typeof responseBody.transformToString === 'function') {
+                    const text = await responseBody.transformToString();
+                    responseStream.write(text);
+                  }
+                } 
+                // Handle JSON response (non-streaming)
+                else if (response.contentType && response.contentType.includes('application/json')) {
+                  let text;
+                  if (typeof responseBody.transformToString === 'function') {
+                    text = await responseBody.transformToString();
+                  } else if (typeof responseBody[Symbol.asyncIterator] === 'function') {
+                    const chunks = [];
+                    for await (const chunk of responseBody) {
+                      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+                    }
+                    text = Buffer.concat(chunks).toString('utf-8');
+                  }
+                  
+                  if (text) {
+                    // Parse the JSON and send as SSE event
+                    const data = safeJsonParse(text) || text;
+                    writeSse(responseStream, { type: 'message', content: data, sessionId: response.runtimeSessionId });
+                  }
+                }
+                // Fallback: try to read as string
+                else {
+                  if (typeof responseBody.transformToString === 'function') {
+                    const text = await responseBody.transformToString();
+                    writeSse(responseStream, { type: 'data', content: text });
+                  }
+                }
+              }
+
+              // Send completion event
+              writeSse(responseStream, { type: 'done', sessionId: response.runtimeSessionId });
+              responseStream.end();
+              
+            } catch (err) {
+              console.error('Handler error:', err.name, err.message);
+              writeSse(responseStream, { type: "error", message: String(err?.message || err) });
+              responseStream.end();
+            }
+          });
+
   AgentCoreAPI:
     Type: AWS::ApiGateway::RestApi
     Properties:
@@ -2471,6 +2784,13 @@ Resources:
       ParentId: !GetAtt AgentCoreAPI.RootResourceId
       PathPart: invoke
 
+  AgentCoreInvokeStreamResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref AgentCoreAPI
+      ParentId: !GetAtt AgentCoreAPI.RootResourceId
+      PathPart: invoke-stream
+
   AgentCoreInvokePostMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -2482,6 +2802,21 @@ Resources:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
         Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AgentCoreProxyFunction.Arn}/invocations'
+
+  # Streaming invoke method
+  AgentCoreInvokeStreamPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref AgentCoreAPI
+      ResourceId: !Ref AgentCoreInvokeStreamResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        # For response streaming, API Gateway uses the /response-streaming-invocations path
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2021-11-15/functions/${AgentCoreStreamProxyFunction.Arn}/response-streaming-invocations'
+        ResponseTransferMode: STREAM
 
 
 
@@ -2509,11 +2844,37 @@ Resources:
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Origin: true
 
+  AgentCoreInvokeStreamOptions:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref AgentCoreAPI
+      ResourceId: !Ref AgentCoreInvokeStreamResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
   AgentCoreAPIDeployment:
     Type: AWS::ApiGateway::Deployment
     DependsOn:
       - AgentCoreInvokePostMethod
       - AgentCoreInvokeOptions
+      - AgentCoreInvokeStreamPostMethod
+      - AgentCoreInvokeStreamOptions
     Properties:
       RestApiId: !Ref AgentCoreAPI
       StageName: prod
@@ -2526,6 +2887,14 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${AgentCoreAPI}/*'
 
+  AgentCoreStreamProxyInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref AgentCoreStreamProxyFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${AgentCoreAPI}/*'
+
 
   UploadChatFrontendHTML:
     Type: Custom::S3Upload
@@ -2535,7 +2904,7 @@ Resources:
     Properties:
       ServiceToken: !GetAtt FrontendChatUploaderFunction.Arn
       BucketName: !Ref FrontendChatBucket
-      ApiEndpoint: !Sub https://${AgentCoreAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/invoke
+      ApiEndpoint: !Sub https://${AgentCoreAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/invoke-stream
 
 Outputs:
 
