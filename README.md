@@ -132,20 +132,11 @@ Think of it as:
 
 ---
 
-## 🤝 Contributing
+## 🤝 Community
+
+Join the LEAP Stacks discord server for info, updates, discussions and to get help: https://discord.gg/pvjPsdms
 
 We welcome contributors ❤️
-
-- 🟢 **Good First Issues**  
-  30%+ of issues are tagged to help new contributors get started quickly.
-
-- 📚 **Documentation-First**  
-  We follow the **Diátaxis** model: *Tutorials · How-To · Reference · Explanation*.
-
-- 🧠 **Community-Driven Evolution**  
-  Prototypes evolve based on real developer usage, not abstract roadmaps.
-
----
 
 ## 📜 License
 
