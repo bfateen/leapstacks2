@@ -364,7 +364,7 @@ Resources:
                         signature_version='s3v4',
                         s3={'addressing_style': 'virtual'} # Ensures consistent hostname
                     )
-                )`
+                )
                 bucket = event['ResourceProperties']['BucketName']
                 ws_url = event['ResourceProperties']['WebSocketURL']
                 html = '''<!DOCTYPE html>
