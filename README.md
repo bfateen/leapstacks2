@@ -1,346 +1,168 @@
-## Launch Environment for AWS Prototypes (LEAP)
+# 🚀 LEAP Stacks 2 — The AI Launchpad for AWS
 
-LEAP is a web-based, open-source environment that allows pre-built prototypes to be launched instantly and modified within only 7 steps. It is designed for seamless integration with existing AWS accounts, requiring no modifications to the current AWS user interface. 
+**Launch. Explore. Adapt. Prototype.**
 
-This solution  enables rapid deployment of full-stack AWS prototypes through a secure web interface. The system consists of two main components:
-1. A script to install the web app into your AWS account
-2. Deployable prototype templates
+Deploy production-ready **AI agents, RAG systems, and full-stack chatbots** to your **own AWS account in minutes** — **no AWS expertise required**.
 
-The environment is setup with the following these steps: 1/ User watches a short video that describes the simple setup process and basic info on CloudFormation and Amazon Bedrock model access, 2/ User requests and is granted access to an AI Model, 3/ User uploads the setup CloudFormation script which installs the web app and sets up all the necessary roles and permissions, 4/ User clicks on the URL for the web app to open it in their browser and chooses from pre-loaded prototypes, 5/ The CloudFormation stack is deployed on the backend and returns the new resources, 6/ Links to the assets are shown clearly to the user (frontend URL, API endpoint, link to Lambda function, etc.), 7/ A brief description about the generated resources and how they interact along with clickable links to 30 second videos that explain concepts (i.e. Prompt Engineering) and services (i.e. API Gateway) which creates a personalized learning path on the right side column.
+> Stop wrestling with infrastructure. Start shipping agents.
 
+---
 
-### Main Features:
-1.	Dynamic loading of custom-built prototypes from a GitHub repository
-2.	One-click prototype deployment system for Generative AI applications
-3.	Choose from several Bedrock LLMs including Amazon Nova, Anthropic Claude, etc.
-4.	Real-time deployment status monitoring, progress tracking and removal with cleanup
-5.	Auto-deleting prototypes with all resources (2 hour default) to prevent unexpected charges
-6.	Direct links to AWS console for deployed services (S3, Lambda, API Gateway)
-7.	Interactive architecture visualization for deployed prototypes
-8.	Integrated explainer system with video tutorials and documentation
-9.	Persistent state management using local storage
-10.	CORS-enabled API endpoints for secure cross-origin requests
+## 🌉 The Problem: Production Valley of Despair
 
-<img width="1450" alt="leap_screenshot1" src="https://github.com/user-attachments/assets/4c249116-7e60-42d5-8c70-0d471bfe3f95" />
+Most AI prototypes die in the **“Production Valley of Despair”** — the gap between a local demo and a secure, observable, production-grade AWS agent.
 
-<img width="987" alt="leap_screenshot2" src="https://github.com/user-attachments/assets/de6239b7-2a98-46e1-a068-353d59dee3af" />
+Web developers can usually get an agent *working*, but turning it into something that is **scalable, secure, observable, and cost-controlled** forces them to solve infrastructure, IAM, observability, and deployment all at once. That’s where momentum dies.
 
-The following initial custom prototypes for idea validation and MVPs will be included in the first version (to be released following AppSec review on November 15th)
-- A full-stack serverless Generative AI chatbot app with a Rest API endpoint
-- A ‘chat with your documents’ Knowledge Base web app using Cognito to secure endpoints
-- A 'chat with a web site' application that uses a headless browser to take snapshots of a website and use the multimodal features of Amazon nova to analyze the image and answer questions and monitor for changes
+**LEAP Stacks 2 bridges this gap** by providing **infrastructure-as-code** templates that install **directly into your AWS account** via a single **CloudFormation** deployment and integrate easily.
 
-   
-## 🎯 Manual Installation
+---
 
-1. Download 'leap-installer-setup.yaml'
-2. Log into your AWS console and navigate to CloudFormation
-3. Click 'Create Stack' -> 'With new resources' -> 'Upload a template file' and select 'leap-installer-setup.yaml'
-4. Continue and submit
-5. When stack has completed (about 30 seconds) click 'Outputs' for login instructions
+## ❓ Why This Exists
 
-<img width="1409" alt="Screenshot 2024-12-12 at 11 08 36 PM" src="https://github.com/user-attachments/assets/38b8fe81-0c4a-432e-a096-80a730fa7c1d" />
+LEAP Stacks exists because **building AI is no longer the hard part — running it responsibly is**.
 
-<img width="1382" alt="Screenshot 2024-12-12 at 11 08 47 PM" src="https://github.com/user-attachments/assets/db8a73a4-0390-4454-ac52-eb4bd3eb6d89" />
+Across AWS blogs, Stack Overflow threads, and developer communities, the same pattern keeps appearing:
 
+- “It works on my laptop” agents fall apart in production  
+- Costs are unpredictable and hard to attribute  
+- Debugging multi-step, tool-using agents is painful  
+- AWS setups sprawl across services before value is proven  
 
-## 🚀 Quick Start
+AWS is actively addressing this with AgentCore, Strands, managed runtimes, and better observability — but **developers still need an opinionated starting point**.
 
-1. Clone this repository
-2. Upload the template to an S3 bucket (due to file size) and deploy the environment installer:
-```bash
+LEAP Stacks is that starting point.
 
-TEMPLATE_URL=$(BUCKET="leap-installer-$(date +%s)" && aws s3 mb s3://$BUCKET && aws s3 cp leap-installer-setup.yaml s3://$BUCKET/ && echo "https://$BUCKET.s3.amazonaws.com/leap-installer-setup.yaml")
+It gives you a **real, production-shaped system on day one**, so you can:
+- Learn by interacting with a live system (not diagrams)
+- Validate behavior, cost, and latency early
+- Adapt the *agent*, not fight the infrastructure
+- Decide what’s worth taking to production — and what isn’t
 
-aws cloudformation create-stack \
-  --stack-name prototype-env \
-  --template-url $TEMPLATE_URL \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --parameters \
-    ParameterKey=AdminEmail,ParameterValue=admin@example.com \
-    ParameterKey=InitialPassword,ParameterValue=Initial123!
-```
+> A prototype isn’t a demo.  
+> **It’s an adapted system under real conditions.**
 
-3. Access the web interface using the URL from stack outputs
-4. Login with provided admin credentials
-5. Select and deploy prototypes
-   
-## 🏗️ Architecture Overview
+---
 
-### Environment Installer Stats
-- **Total AWS Services**: 12
-- **Custom Resources**: 4
-- **IAM Roles**: 5
-- **Lambda Functions**: 6
-- **API Gateway Endpoints**: 3
+## 🔥 Why LEAP Stacks v2?
 
-## Security Features
+- ⚡ **Zero-to-Production in minutes**  
+  Single-click deployment. No CLI, CDK, or Terraform required.
 
-While our emphasis in this solution is on building rapid prototyping capabilities, security remains a critical consideration even as we optimize for speed and simplicity. Our primary security strategy centers on securing all endpoints and on isolation – so we will run all prototypes in dedicated sandbox AWS accounts, separate from production environments. This approach leverages AWS's strongest security boundary - account isolation - while allowing us to simplify other security controls that might otherwise create friction in the prototyping process.
+- 🛡️ **Zero “Bill Shock” by Default**  
+  Every stack includes an optional **2-hour auto-cleanup timer**, removing the #1 fear developers have when experimenting on AWS.
 
-We will use Coginto to secure the access to ensure:
+- 📊 **Production Observability from Day One**  
+  Live **cost-per-message**, **token usage**, **latency**, and request logs — not afterthoughts.
 
-- Only login page is publicly accessible
-- Protected content requires authentication
-- Error page for unauthorized access
-- Proper CORS and security headers
-- The Cognito JWT token received after login expires (default is 1 hour)
-- The signed S3 URL generated by the Lambda function expires after 5 minutes
+- 🧠 **Multi-Model Freedom**  
+  Instantly switch between **20+ foundation models**, including **Claude Sonnet 4.5** and **Amazon Nova Pro**, etc.
 
-1. **Authentication & Authorization**
-   - Cognito User Pool with secure password policies
-   - API Gateway authorization
-   - IAM role least privilege principle
+- 🧩 **Opinionated, but Escapable**  
+  Start with best-practice defaults — then go under the hood when you’re ready.
 
-2. **Data Protection**
-   - S3 bucket encryption
-   - HTTPS only access
-   - Secure parameter handling
+---
 
-3. **Network Security**
-   - Private subnet deployment options
-   - CORS configuration
-   - API Gateway resource policies
-  
-  <img width="1367" alt="Screenshot 2024-11-05 at 1 23 43 PM" src="https://github.com/user-attachments/assets/891ffb26-1102-4065-b226-edcf09020317">
+## 🏗️ Prototype Catalog
 
-To validate the security posture of prototypes created through this solution, we will follow the Content Security Review process as well as use ‘Prowler’, an industry-standard automated security assessment tool that is widely used within AWS security teams. Prowler provides comprehensive scanning for misconfigurations and potential security issues, offering more reliability than manual security reviews. This automated approach helps identify subtle security gaps that could be easily overlooked during rapid prototyping phases.
+LEAP Stacks 2 includes **12 pre-built prototypes**, grouped to take you from cloud fundamentals to advanced agentic workflows.
 
-While we streamline security configurations to enable rapid experimentation, we maintain vigilance over fundamental security controls. Each prototype environment ensures proper implementation of basic security features such as client-side encryption and appropriate logging configurations. These foundational security measures are non-negotiable even in prototype environments, establishing good security practices from the start.
+### 1️⃣ Advanced Agentic Workflows
 
+| Prototype | Description |
+|---------|------------|
+| **Agentic Automation (n8n)** | Fully hosted n8n for visual AI workflow automation |
+| **Voice AI Agent** | Real-time speech-to-speech agent powered by Amazon Nova Sonic 2 |
+| **Autonomous Agent Runtime** | Self-updating agent environment with memory + code editor |
+| **Agent with MCP Tools** | Serverless agent using Model Context Protocol tools |
 
-## 🔧 Technical Details
+### 2️⃣ GenAI Foundations
 
-### Custom Resources
-The solution uses several custom resources for advanced functionality:
+| Prototype | Description |
+|---------|------------|
+| **Website Chat (Multimodal)** | Agent that can view websites, answer questions, and monitor changes |
+| **RAG Knowledge Base (Aurora)** | Full-stack RAG with relational + vector storage |
+| **RAG Knowledge Base (OpenSearch)** | Secure vector search with AI agents |
+| **GenAI Chatbot** | Minimal serverless chatbot with secure API Key |
 
-#### 1. S3 Content Uploader
-```yaml
-ContentUploader:
-  Type: AWS::Lambda::Function
-  Properties:
-    Handler: index.handler
-    Code:
-      ZipFile: |
-        import boto3
-        import cfnresponse
-        
-        def handler(event, context):
-            try:
-                if event['RequestType'] in ['Create', 'Update']:
-                    s3 = boto3.client('s3')
-                    bucket = event['ResourceProperties']['BucketName']
-                    body = event['ResourceProperties']['Body']
-                    
-                    s3.put_object(
-                        Bucket=bucket,
-                        Key='protected.html',
-                        Body=body,
-                        ContentType='text/html'
-                    )
-```
+### 3️⃣ AWS Foundations
 
-#### 2. Cognito User Creator
-```yaml
-CognitoUserCreator:
-  Type: AWS::Lambda::Function
-  Properties:
-    Handler: index.handler
-    Code:
-      ZipFile: |
-        def handler(event, context):
-            if event['RequestType'] in ['Create', 'Update']:
-                cognito = boto3.client('cognito-idp')
-                user_pool_id = event['ResourceProperties']['UserPoolId']
-                email = event['ResourceProperties']['AdminEmail']
-```
+| Prototype | Description |
+|---------|------------|
+| **Deploy from GitHub** | Auto-deploy apps from GitHub to AWS Amplify |
+| **Authentication & User Management** | Secure auth with admin approval workflow |
+| **Serverless Photo Gallery** | Upload and browse images using cloud storage |
+| **Serverless CRUD App** | Notes app demonstrating serverless data patterns |
 
-### Available Prototypes
+---
 
-### 1. Bedrock Chat Application
-- **Services**: Lambda, API Gateway, S3
-- **Features**: 
-  - Real-time chat interface
-  - Integration with AWS Bedrock
-  - Serverless architecture
-- **Deployment Time**: ~5 minutes
+## 🚀 Quickstart
 
-```yaml
-Resources:
-  ChatFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      Handler: index.lambda_handler
-      Code:
-        ZipFile: |
-          def lambda_handler(event, context):
-              client = boto3.client("bedrock-runtime")
-              response = client.converse(
-                  modelId="anthropic.claude-3-5-sonnet-20240620-v1:0",
-                  messages=[msg]
-              )
-```
+1. **Deploy the Environment**  
+   Click here to directly load the script or upload `leap-installer-setup.yaml` to the **AWS CloudFormation Console**.
 
-### 2. Document Chat Application with Amazon Bedrock
+2. **Access the Dashboard**  
+   Once the stack is `CREATE_COMPLETE` (~30 seconds), open the LoginURL from **Stack Outputs**.
 
-A full-stack application that enables intelligent document interactions using Amazon Bedrock's Knowledge Base and Agent capabilities. This prototype demonstrates Retrieval-Augmented Generation (RAG) architecture for building AI-powered document question-answering systems.
+3. **Launch a Prototype**  
+   Pick a prototype (e.g. *Voice AI Agent*) and click **Launch**.
 
-- **Services**: Cognito, OpenSearch Serverless Collections, Amazon Bedrock, Lambda, API Gateway, S3
+4. **Explore & Adapt**  
+   Edit agent memory live, swap models mid-session, and compare behavior, cost, and latency instantly.
 
-#### Features
-- **Vector Search**: Utilizes OpenSearch Serverless for efficient document embedding storage
-- **RAG Implementation**: Combines Knowledge Base retrieval with LLM generation
-- **Real-time Chat**: Interactive web interface for document queries
-- **Secure Storage**: Encrypted S3 buckets for document management
-- **Custom Agents**: Bedrock agent with specialized instruction sets
+---
 
-##### Vector Store Setup
-```yaml
-Collection:
-  Type: 'AWS::OpenSearchServerless::Collection'
-  Properties:
-    Name: !Ref AOSSCollectionName
-    Type: VECTORSEARCH
-    StandbyReplicas: DISABLED
-    Description: Collection to hold vector search data
-```
+## ✨ What’s New in Version 2
 
-##### Knowledge Base Configuration
-```yaml
-KnowledgeBaseWithAoss:
-  Type: AWS::Bedrock::KnowledgeBase
-  Properties:
-    Name: !Ref KnowledgeBaseName
-    KnowledgeBaseConfiguration:
-      Type: "VECTOR"
-      VectorKnowledgeBaseConfiguration:
-        EmbeddingModelArn: !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v1"
-    StorageConfiguration:
-      Type: "OPENSEARCH_SERVERLESS"
-      OpensearchServerlessConfiguration:
-        CollectionArn: !GetAtt Collection.Arn
-        VectorIndexName: !Ref AOSSIndexName
-```
+- 🚢 **Ship Anywhere**  
+  Export full-stack prototypes to **GitHub** in one click — ready to fork and extend.
 
-##### Bedrock Agent Setup
-```yaml
-AgentResource:
-  Type: AWS::Bedrock::Agent
-  Properties:
-    AgentName: !Ref AgentName
-    FoundationModel: "amazon.titan-text-premier-v1:0"
-    Instruction: "You are an HR bot tasked with matching candidates to suitable roles based on their skill sets, experience, and qualifications."
-    KnowledgeBases:
-      - KnowledgeBaseId: !Ref KnowledgeBaseWithAoss
-        KnowledgeBaseState: ENABLED
-```
+- 🎨 **Vibe Coding Integration**  
+  Import stacks into **Kiro** for spec-driven development with custom steering docs.
 
-#### Resource Count
-| Component | Count |
-|-----------|--------|
-| Lambda Functions | 5 |
-| IAM Roles | 4 |
-| S3 Buckets | 2 |
-| Custom Resources | 3 |
-| OpenSearch Collections | 1 |
-| Bedrock Components | 3 |
+- 🌐 **External App Hosting**  
+  Securely import and host **Lovable** and **Replit** apps in your AWS account.
 
-#### Security Features
-- Encrypted document storage
-- Private S3 buckets with strict access policies
-- IAM role-based access control
-- HTTPS-only API endpoints
-- Secure websocket connections for real-time chat
+- 🧠 **Live Memory Editing**  
+  Browser-based agent logic editing for **AgentCore** agents in real time.
 
-#### Custom Resource Highlights
+---
 
-##### Vector Index Creation
-```yaml
-OpenSearchVectorIndexLambda:
-  Type: AWS::Lambda::Function
-  Properties:
-    Handler: index.handler
-    Code:
-      ZipFile: |
-        def create_vector_index(endpoint, index_name, awsauth):
-            index_body = {
-                "settings": {
-                    "index.knn": True
-                },
-                "mappings": {
-                    "properties": {
-                        "vector": {
-                            "type": "knn_vector",
-                            "dimension": 1536,
-                            "method": {
-                                "name": "hnsw",
-                                "space_type": "l2",
-                                "engine": "faiss"
-                            }
-                        }
-                    }
-                }
-            }
-```
+## 🧠 How This Is Different from “Samples”
 
+Most AWS samples:
+- Require cloning repos and running CLIs
+- Focus on single services or narrow use cases
+- Skip cost controls and observability
+- Leave you with cleanup debt
 
-#### Limitations and Considerations
-- Maximum document size: 5MB
-- Supported file formats: PDF, TXT, DOCX
-- Vector dimension: 1536 (Titan Embedding Model)
-- Maximum concurrent users: Based on Lambda concurrency limits
-- API Gateway throttling: 10,000 requests per second
+LEAP Stacks:
+- Launches **full-stack systems**, not snippets
+- Installs into **your AWS account**, not a shared sandbox
+- Includes **auto-cleanup and live cost signals**
+- Teaches by **running**, not reading
 
-This prototype showcases the integration of various AWS services to create a powerful document interaction system. It's ideal for scenarios requiring intelligent document analysis, Q&A systems, or knowledge base applications.
+Think of it as:
+> **A playground + a blueprint + a safety net**
 
-## 🛠️ Advanced Configuration
-
-### Environment Variables
-The installer supports several configuration parameters:
-
-```yaml
-Parameters:
-  AdminEmail:
-    Type: String
-    Description: Email address for the admin user
-  InitialPassword:
-    Type: String
-    Description: Initial password for the admin user
-    NoEcho: true
-```
-
-### Custom Prototype Submission
-To submit a new prototype, please provide the following metadata in addition to the CloudFormation template:
-
-<img width="529" alt="format" src="https://github.com/user-attachments/assets/4e97ee18-45e9-4397-a9b2-849332f620a8">
-
-
-### Custom Domain Configuration
-To use a custom domain:
-
-1. Add certificate in ACM
-2. Configure API Gateway custom domain
-3. Update CloudFront distribution
-
-## 📊 CloudFormation Resource Count
-
-| Resource Type | Count |
-|--------------|-------|
-| Lambda Functions | 6 |
-| IAM Roles | 5 |
-| S3 Buckets | 1 |
-| API Gateway APIs | 3 |
-| Cognito Resources | 3 |
-| Custom Resources | 4 |
+---
 
 ## 🤝 Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
+We welcome contributors ❤️
 
-## 📝 License
+- 🟢 **Good First Issues**  
+  30%+ of issues are tagged to help new contributors get started quickly.
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+- 📚 **Documentation-First**  
+  We follow the **Diátaxis** model: *Tutorials · How-To · Reference · Explanation*.
+
+- 🧠 **Community-Driven Evolution**  
+  Prototypes evolve based on real developer usage, not abstract roadmaps.
+
+---
+
+## 📜 License
+
+Distributed under the **MIT License**.  
+See the `LICENSE` file for details.
