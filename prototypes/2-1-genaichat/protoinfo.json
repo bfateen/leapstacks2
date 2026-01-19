@@ -1,0 +1,82 @@
+{
+    "title": "GenAI Chatbot",
+    "description": "A simple chatbot that uses AI to answer questions using a serverless architecture.",
+    "fulldescription": "This prototype launches a complete chat application. It uses Amazon S3 to host the website interface you see in your browser. When you send a message, it goes through Amazon API Gateway to an AWS Lambda function. This function sends your text to Amazon Bedrock, which generates the AI response. The conversation history is saved in Amazon DynamoDB so you can keep track of what was said. It is a serverless setup, meaning you do not pay for servers when no one is using it.",
+    "icon": "leapai_chat.png",
+    "videoUrl": "proto.mp4",
+    "services": [
+        {
+            "name": "Amazon S3",
+            "desc": "Stores the website frontend files securely."
+        },
+        {
+            "name": "Amazon API Gateway",
+            "desc": "Connects the website frontend to the backend code."
+        },
+        {
+            "name": "AWS Lambda",
+            "desc": "Runs the code that sends your message to the AI model."
+        },
+        {
+            "name": "Amazon Bedrock",
+            "desc": "Provides the AI intelligence to generate responses."
+        },
+        {
+            "name": "Amazon DynamoDB",
+            "desc": "Saves a log of all chat messages and metadata."
+        },
+        {
+            "name": "AWS Identity and Access Management (IAM)",
+            "desc": "Manages security permissions between the services."
+        }
+    ],
+    "estimatedCost": "Free Tier Eligible",
+    "estimatedTimeString": "Setup time: 2-3 minutes",
+    "estimatedSetupTime": 150,
+    "requiredModels": [],
+    "costDetailsHTML": "<div style=\"max-width:700px;margin:20px auto;background:linear-gradient(135deg,#232f3e 0%,#37475a 100%);border-radius:15px;padding:25px;color:white;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.2)\"><div style=\"text-align:center;margin-bottom:20px\"><h3 style=\"margin:0 0 10px 0;font-size:1.8rem;font-weight:700\">Serverless Chatbot</h3><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px\"><div style=\"font-size:2.2rem;font-weight:900;margin:0\">Free Tier Eligible</div><div style=\"font-size:1.1rem;opacity:0.9\">+ Bedrock Usage Fees</div></div></div><div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:15px\"><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #FF9900\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">\u03bb AWS Lambda</div><div style=\"font-size:1.2rem;font-weight:700\">Usage Based</div><div style=\"font-size:0.8rem;opacity:0.9\">First 1 million requests per month are free. Very low cost for text processing.</div></div><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #22c55e\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">\ud83e\udde0 Amazon Bedrock</div><div style=\"font-size:1.2rem;font-weight:700\">Per Token</div><div style=\"font-size:0.8rem;opacity:0.9\">You pay for the amount of text you send and receive from the AI model.</div></div><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #3b82f6\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">\u26a1 Amazon DynamoDB</div><div style=\"font-size:1.2rem;font-weight:700\">Free (25GB)</div><div style=\"font-size:0.8rem;opacity:0.9\">Always Free Tier includes 25GB of storage and 200M requests per month.</div></div></div><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px;margin-top:20px\"><div style=\"font-weight:600;margin-bottom:10px;font-size:1rem\">\ud83d\udca1 Cost Saving Tips</div><div style=\"display:grid;grid-template-columns:1fr;gap:10px;font-size:0.85rem\"><div>\u2022 <strong>Models:</strong> Different AI models have different prices. Lighter models are cheaper and faster.</div><div>\u2022 <strong>Scale to Zero:</strong> Because this is serverless, you pay $0.00 if no one is using the chatbot.</div></div></div></div>",
+    "templates": [
+        {
+            "name": "template.yaml",
+            "inputs": [],
+            "outputs": []
+        }
+    ],
+    "developerResources": [
+        {
+            "outputKey": "ApiEndpoint",
+            "label": "API Endpoint",
+            "description": "Base URL for making chat API requests",
+            "type": "url"
+        },
+        {
+            "outputKey": "LambdaFunctionName",
+            "label": "Lambda Function",
+            "description": "Name of the chat handler function - modify to customize responses",
+            "type": "text",
+            "consoleUrl": "https://console.aws.amazon.com/lambda/home?region={{region}}#/functions/{{value}}"
+        },
+        {
+            "outputKey": "DynamoDBTableName",
+            "label": "DynamoDB Table",
+            "description": "Chat logs table - query for analytics or export data",
+            "type": "text",
+            "consoleUrl": "https://console.aws.amazon.com/dynamodbv2/home?region={{region}}#table?name={{value}}"
+        },
+        {
+            "outputKey": "S3BucketName",
+            "label": "S3 Bucket",
+            "description": "Static website bucket - upload custom frontend files here",
+            "type": "text",
+            "consoleUrl": "https://s3.console.aws.amazon.com/s3/buckets/{{value}}"
+        },
+        {
+            "outputKey": "IntegrationCode",
+            "label": "Integration Code",
+            "description": "JavaScript snippet to connect your app to the backend API",
+            "type": "code",
+            "language": "javascript"
+        }
+    ],
+    "group": "GenAI Foundations"
+}

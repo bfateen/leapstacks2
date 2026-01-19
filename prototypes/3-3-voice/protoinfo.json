@@ -1,0 +1,54 @@
+{
+    "title": "Voice AI Agent",
+    "description": "A real-time voice assistant powered by Amazon Nova Sonic 2.",
+    "fulldescription": "This prototype launches a voice-enabled AI assistant capable of real-time speech-to-speech interaction. It uses Amazon EC2 to host a lightweight WebSocket server that streams audio directly to Amazon Bedrock. The AI model used is Amazon Nova Sonic 2, which is optimized for low-latency speech processing. Amazon CloudFront provides a secure, HTTPS-enabled frontend interface, while Amazon S3 stores the web application files. This setup demonstrates how to build responsive voice interfaces without managing complex audio processing pipelines.",
+    "icon": "leapai_web.png",
+    "videoUrl": "proto.mp4",
+    "services": [
+        {
+            "name": "Amazon EC2",
+            "desc": "Hosts the real-time WebSocket server for audio streaming."
+        },
+        {
+            "name": "Amazon Bedrock",
+            "desc": "Runs the Nova Sonic 2 model for speech-to-speech inference."
+        },
+        {
+            "name": "Amazon CloudFront",
+            "desc": "Delivers the secure web interface to your browser."
+        },
+        {
+            "name": "S3",
+            "desc": "Stores the frontend HTML and client-side assets."
+        },
+        {
+            "name": "Lambda",
+            "desc": "Handles initial setup and content uploading."
+        }
+    ],
+    "estimatedCost": "~$0.042/hr + usage",
+    "estimatedTimeString": "Setup time: 3-5 minutes",
+    "estimatedSetupTime": 300,
+    "requiredModels": [
+        "amazon.nova-2-sonic-v1:0"
+    ],
+    "custom_outputs": [
+        {
+            "id": "FrontendURL",
+            "title": "Open Voice Interface"
+        },
+        {
+            "id": "DirectWebSocket",
+            "title": "Direct WS Link (Testing)"
+        }
+    ],
+    "costDetailsHTML": "<div style=\"max-width:700px;margin:20px auto;background:linear-gradient(135deg,#232f3e 0%,#37475a 100%);border-radius:15px;padding:25px;color:white;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.2)\"><div style=\"text-align:center;margin-bottom:20px\"><h3 style=\"margin:0 0 10px 0;font-size:1.8rem;font-weight:700\">Nova Sonic Voice Agent</h3><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px\"><div style=\"font-size:2.2rem;font-weight:900;margin:0\">~$0.042 / hour</div><div style=\"font-size:1.1rem;opacity:0.9\">+ Model Usage Fees</div></div></div><div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:15px\"><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #FF9900\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">\ud83d\udcbb Amazon EC2</div><div style=\"font-size:1.2rem;font-weight:700\">$0.0416/hr</div><div style=\"font-size:0.8rem;opacity:0.9\">t3.medium instance (US East 1) running the WebSocket server.</div></div><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #22c55e\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">\ud83d\udde3\ufe0f Nova Sonic</div><div style=\"font-size:1.2rem;font-weight:700\">Usage Based</div><div style=\"font-size:0.8rem;opacity:0.9\">Charged per input/output token (audio is converted to tokens).</div></div><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #3b82f6\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">\ud83c\udf10 CloudFront</div><div style=\"font-size:1.2rem;font-weight:700\">Free Tier</div><div style=\"font-size:0.8rem;opacity:0.9\">Standard data transfer rates apply after Free Tier limits.</div></div></div><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px;margin-top:20px\"><div style=\"font-weight:600;margin-bottom:10px;font-size:1rem\">\ud83d\udca1 Cost Saving Tips</div><div style=\"display:grid;grid-template-columns:1fr;gap:10px;font-size:0.85rem\"><div>\u2022 <strong>Stop Instance:</strong> Since this uses EC2, you pay for the server time even when idle. Delete the stack when you are done testing.</div><div>\u2022 <strong>Audio Duration:</strong> Shorter voice interactions consume fewer model tokens.</div></div></div></div>",
+    "templates": [
+        {
+            "name": "template.yaml",
+            "inputs": [],
+            "outputs": []
+        }
+    ],
+    "group": "Advanced Agentic Workflows"
+}

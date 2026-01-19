@@ -1,0 +1,56 @@
+{
+    "title": "Agent with MCP Tools",
+    "description": "Deploy a serverless AI agent with Model Context Protocol tools.",
+    "fulldescription": "This prototype launches a modular AI agent architecture using the Strands SDK and the Model Context Protocol (MCP). It deploys two main components on AWS Lambda: an AI Agent and an MCP Server. The Agent is configured to use tools provided by the MCP Server, such as querying an employee database stored in Amazon DynamoDB, reading meeting transcripts from Amazon S3, and fetching weather data. It includes a modern HTML chat interface served securely via S3. This setup demonstrates how to build extensible, tool-using AI systems using open standards without managing servers.",
+    "icon": "leapai_web.png",
+    "videoUrl": "proto.mp4",
+    "services": [
+        {
+            "name": "AWS Lambda",
+            "desc": "Runs the Strands Agent and the FastMCP Server logic serverlessly."
+        },
+        {
+            "name": "Amazon API Gateway",
+            "desc": "Exposes the Agent and MCP server endpoints for the frontend to connect to."
+        },
+        {
+            "name": "Amazon DynamoDB",
+            "desc": "Stores employee records, session state, and chat history logs."
+        },
+        {
+            "name": "Amazon Bedrock",
+            "desc": "Provides the LLM intelligence used by the Strands Agent."
+        },
+        {
+            "name": "S3",
+            "desc": "Stores the web interface, layer artifacts, and meeting transcripts."
+        },
+        {
+            "name": "AWS Identity and Access Management (IAM)",
+            "desc": "Manages secure permissions between the Agent, MCP Server, and data sources."
+        }
+    ],
+    "estimatedCost": "Free Tier Eligible / Usage-based",
+    "estimatedTimeString": "Setup time: 6-8 minutes",
+    "estimatedSetupTime": 480,
+    "requiredModels": [],
+    "custom_outputs": [
+        {
+            "id": "FrontendURL",
+            "title": "Open Chat Interface"
+        },
+        {
+            "id": "S3BucketName",
+            "title": "View Transcripts Bucket"
+        }
+    ],
+    "costDetailsHTML": "<div style=\"max-width:700px;margin:20px auto;background:linear-gradient(135deg,#232f3e 0%,#37475a 100%);border-radius:15px;padding:25px;color:white;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.2)\"><div style=\"text-align:center;margin-bottom:20px\"><h3 style=\"margin:0 0 10px 0;font-size:1.8rem;font-weight:700\">Serverless Agent & MCP</h3><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px\"><div style=\"font-size:2.2rem;font-weight:900;margin:0\">Free Tier Eligible</div><div style=\"font-size:1.1rem;opacity:0.9\">+ Bedrock Model Usage</div></div></div><div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:15px\"><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #FF9900\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">\u03bb AWS Lambda</div><div style=\"font-size:1.2rem;font-weight:700\">Usage Based</div><div style=\"font-size:0.8rem;opacity:0.9\">Free Tier includes 400,000 GB-seconds per month. Costs are negligible for testing.</div></div><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #22c55e\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">\ud83e\udde0 Bedrock</div><div style=\"font-size:1.2rem;font-weight:700\">Per Token</div><div style=\"font-size:0.8rem;opacity:0.9\">You pay only for the text processed by the AI model during conversations.</div></div><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #3b82f6\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">\u26a1 DynamoDB</div><div style=\"font-size:1.2rem;font-weight:700\">Pay-per-request</div><div style=\"font-size:0.8rem;opacity:0.9\">Stores employee data and logs. 25GB storage is included in the Always Free Tier.</div></div></div><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px;margin-top:20px\"><div style=\"font-weight:600;margin-bottom:10px;font-size:1rem\">\ud83d\udca1 Cost Saving Tips</div><div style=\"display:grid;grid-template-columns:1fr;gap:10px;font-size:0.85rem\"><div>\u2022 <strong>Logs:</strong> Chat logs are stored in DynamoDB. Delete the stack to remove the tables if you do not need the history.</div><div>\u2022 <strong>Models:</strong> Using lighter models like Haiku will significantly reduce the cost per message compared to Sonnet or Opus.</div></div></div></div>",
+    "templates": [
+        {
+            "name": "template.yaml",
+            "inputs": [],
+            "outputs": []
+        }
+    ],
+    "group": "Advanced Agentic Workflows"
+}

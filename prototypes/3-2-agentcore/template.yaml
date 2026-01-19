@@ -1,0 +1,2621 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Complete Amazon Bedrock AgentCore Runtime with Strands Agent - Automated Build and Deploy - WITH S3 CLEANUP'
+
+Parameters:
+  AgentName:
+    Type: String
+    Description: 'Name of the Strands agent (letters, numbers, underscores only; must start with letter; max 48 chars)'
+    Default: myagentleap123
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9_]{0,47}'
+    ConstraintDescription: 'Must start with a letter and contain only letters, numbers, and underscores (max 48 characters)'
+
+  BedrockModelId:
+    Type: String
+    Description: Bedrock model ID to use
+    Default: USERSELMODEL
+
+  AgentSystemPrompt:
+    Type: String
+    Description: System prompt for the Strands agent
+    Default: 'You are a helpful AI assistant. Answer questions clearly and concisely.'
+
+  
+  EndpointSuffix:
+    Type: String
+    Default: "x"
+    Description: "Unique suffix per deployment to avoid endpoint name conflicts (e.g., timestamp or short hash)."
+
+  RuntimeUpdateTrigger:
+    Type: String
+    Default: "initial"
+
+  ImageDigest:
+    Type: String
+    Default: ""
+
+
+Resources:
+
+
+  # ============================================
+  # S3 BUCKET CLEANUP RESOURCES (ADD FIRST)
+  # ============================================
+  CleanupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3ECRCleanupPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:DeleteObject
+                  - s3:DeleteObjectVersion
+                  - s3:GetObjectVersion
+                  - s3:ListBucketVersions
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchDeleteImage
+                  - ecr:ListImages
+                  - ecr:DescribeRepositories
+                Resource: '*'
+
+  CleanupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt CleanupRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import logging
+          import time
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def delete_ecr_images(repository_name):
+              """Delete all images from an ECR repository"""
+              try:
+                  logger.info(f"Starting cleanup of ECR repository: {repository_name}")
+                  ecr = boto3.client('ecr')
+                  
+                  # List all images in the repository
+                  try:
+                      response = ecr.list_images(repositoryName=repository_name)
+                      image_ids = response.get('imageIds', [])
+                      
+                      if not image_ids:
+                          logger.info(f"No images found in repository: {repository_name}")
+                          return True
+                      
+                      logger.info(f"Found {len(image_ids)} images to delete")
+                      
+                      # Delete images in batches of 100 (ECR limit)
+                      batch_size = 100
+                      for i in range(0, len(image_ids), batch_size):
+                          batch = image_ids[i:i + batch_size]
+                          logger.info(f"Deleting batch of {len(batch)} images")
+                          ecr.batch_delete_image(
+                              repositoryName=repository_name,
+                              imageIds=batch
+                          )
+                      
+                      logger.info(f"Successfully cleaned up ECR repository: {repository_name}")
+                      return True
+                      
+                  except ecr.exceptions.RepositoryNotFoundException:
+                      logger.info(f"Repository not found (may have been deleted): {repository_name}")
+                      return True
+                  except Exception as e:
+                      logger.error(f"Error deleting ECR images: {str(e)}")
+                      return False
+                      
+              except Exception as e:
+                  logger.error(f"Error accessing ECR repository: {str(e)}")
+                  return False
+
+          def delete_bucket_contents(bucket_name):
+              try:
+                  logger.info(f"Starting cleanup of bucket: {bucket_name}")
+                  s3 = boto3.client('s3')
+                  
+                  # Delete all object versions
+                  paginator = s3.get_paginator('list_object_versions')
+                  pages = paginator.paginate(Bucket=bucket_name)
+                  
+                  delete_list = []
+                  
+                  try:
+                      for page in pages:
+                          # Handle versions
+                          if 'Versions' in page:
+                              for version in page['Versions']:
+                                  delete_list.append({
+                                      'Key': version['Key'],
+                                      'VersionId': version['VersionId']
+                                  })
+                          
+                          # Handle delete markers
+                          if 'DeleteMarkers' in page:
+                              for marker in page['DeleteMarkers']:
+                                  delete_list.append({
+                                      'Key': marker['Key'],
+                                      'VersionId': marker['VersionId']
+                                  })
+                          
+                          if delete_list:
+                              logger.info(f"Deleting {len(delete_list)} objects")
+                              s3.delete_objects(
+                                  Bucket=bucket_name,
+                                  Delete={'Objects': delete_list}
+                              )
+                              delete_list = []
+                      
+                      # Final check for non-versioned objects
+                      paginator = s3.get_paginator('list_objects_v2')
+                      pages = paginator.paginate(Bucket=bucket_name)
+                      
+                      for page in pages:
+                          if 'Contents' in page:
+                              objects = [{'Key': obj['Key']} for obj in page['Contents']]
+                              if objects:
+                                  logger.info(f"Deleting {len(objects)} non-versioned objects")
+                                  s3.delete_objects(
+                                      Bucket=bucket_name,
+                                      Delete={'Objects': objects}
+                                  )
+                      
+                      logger.info(f"Successfully cleaned up bucket: {bucket_name}")
+                      return True
+                      
+                  except Exception as e:
+                      logger.error(f"Error during deletion: {str(e)}")
+                      return False
+                      
+              except Exception as e:
+                  logger.error(f"Error accessing bucket: {str(e)}")
+                  return False
+
+          def handler(event, context):
+              logger.info('Received event: %s', event)
+              response_data = {}
+              
+              try:
+                  resource_props = event['ResourceProperties']
+                  resource_type = resource_props.get('ResourceType', 'S3')
+                  
+                  if event['RequestType'] == 'Delete':
+                      max_attempts = 3
+                      
+                      if resource_type == 'ECR':
+                          repository_name = resource_props['RepositoryName']
+                          logger.info(f"Cleaning up ECR repository: {repository_name}")
+                          
+                          for attempt in range(max_attempts):
+                              logger.info(f"ECR cleanup attempt {attempt + 1} of {max_attempts}")
+                              if delete_ecr_images(repository_name):
+                                  break
+                              if attempt < max_attempts - 1:
+                                  time.sleep(5)
+                      
+                      elif resource_type == 'S3':
+                          bucket_name = resource_props['BucketName']
+                          logger.info(f"Cleaning up S3 bucket: {bucket_name}")
+                          
+                          for attempt in range(max_attempts):
+                              logger.info(f"S3 cleanup attempt {attempt + 1} of {max_attempts}")
+                              if delete_bucket_contents(bucket_name):
+                                  break
+                              if attempt < max_attempts - 1:
+                                  time.sleep(5)
+                  
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                  
+              except Exception as e:
+                  logger.error(f"Error in handler: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, response_data)
+
+      Runtime: python3.11
+      Timeout: 300  # 5 minutes
+      MemorySize: 256
+
+  # ============================================
+  # ECR Repository
+  # ============================================
+  AgentECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub 'bedrock-agentcore-${AgentName}'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [{
+              "rulePriority": 1,
+              "description": "Keep last 10 images",
+              "selection": {
+                "tagStatus": "any",
+                "countType": "imageCountMoreThan",
+                "countNumber": 10
+              },
+              "action": { "type": "expire" }
+            }]
+          }
+
+  # Custom resource to clean up ECR repository on stack deletion
+  AgentECRRepositoryCleanup:
+    Type: Custom::ECRCleanup
+    DependsOn: AgentECRRepository
+    Properties:
+      ServiceToken: !GetAtt CleanupFunction.Arn
+      ResourceType: ECR
+      RepositoryName: !Sub 'bedrock-agentcore-${AgentName}'
+
+  # ============================================
+  # S3 Bucket for Build Artifacts
+  # ============================================
+  BuildArtifactsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketName: !Sub '${AgentName}artifacts${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldArtifacts
+            Status: Enabled
+            ExpirationInDays: 7
+
+  # Custom resource to clean up BuildArtifactsBucket on stack deletion
+  BuildArtifactsBucketCleanup:
+    Type: Custom::S3Cleanup
+    DependsOn: BuildArtifactsBucket
+    Properties:
+      ServiceToken: !GetAtt CleanupFunction.Arn
+      ResourceType: S3
+      BucketName: !Ref BuildArtifactsBucket
+
+  # ============================================
+  # CodeBuild Policy
+  # ============================================
+  CodeBuildPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CloudWatchLogs
+            Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource:
+              - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*'
+          
+          - Sid: ECRPermissions
+            Effect: Allow
+            Action:
+              - ecr:GetAuthorizationToken
+              - ecr:BatchCheckLayerAvailability
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+              - ecr:PutImage
+              - ecr:InitiateLayerUpload
+              - ecr:UploadLayerPart
+              - ecr:CompleteLayerUpload
+            Resource: '*'
+          
+          - Sid: S3Permissions
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+            Resource:
+              - !Sub '${BuildArtifactsBucket.Arn}/*'
+
+  # ============================================
+  # CodeBuild Role
+  # ============================================
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'CodeBuildRole-${AgentName}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref CodeBuildPolicy
+
+  # ============================================
+  # CodeBuild Project
+  # ============================================
+  AgentBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${AgentName}-build'
+      Description: Build Strands agent container for AgentCore Runtime
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: ARM_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-aarch64-standard:3.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+          - Name: IMAGE_REPO_NAME
+            Value: !Sub 'bedrock-agentcore-${AgentName}'
+          - Name: IMAGE_TAG
+            Value: latest
+          - Name: AGENT_NAME
+            Value: !Ref AgentName
+          - Name: BEDROCK_MODEL_ID
+            Value: !Ref BedrockModelId
+          - Name: AGENT_SYSTEM_PROMPT
+            Value: !Ref AgentSystemPrompt
+          - Name: CODE_BUCKET
+            Value: !Ref BuildArtifactsBucket
+          - Name: CODE_KEY
+            Value: !Sub '${AgentName}/agent_code.py'
+      Source:
+        Type: NO_SOURCE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - set -euo pipefail
+                - echo "Logging in to Amazon ECR"
+                - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+                - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
+                - echo "Preparing agent code..."
+                - |
+                  echo "Fetching agent code from s3://$CODE_BUCKET/$CODE_KEY (falls back to template if missing)"
+                  if aws s3 cp "s3://$CODE_BUCKET/$CODE_KEY" my_agent.py 2>/dev/null ; then
+                    echo "Loaded agent code from S3"
+                  else
+                    echo "Using default template code"
+                    cat > my_agent.py << 'AGENT_EOF'
+                  # Strands Agent Code
+                  # Strands Agent Code
+                  from bedrock_agentcore.runtime import BedrockAgentCoreApp
+                  from strands import Agent
+                  from strands.models import BedrockModel
+                  import os
+                  import traceback
+
+                  # Initialize the AgentCore app
+                  app = BedrockAgentCoreApp()
+
+                  # Get configuration from environment variables
+                  model_id = os.getenv('BEDROCK_MODEL_ID', 'anthropic.claude-3-5-sonnet-20240620-v1:0')
+                  aws_region = os.getenv('AWS_REGION', 'us-west-2')
+                  system_prompt = 'You are a helpful AI assistant called derik, always introduce yourself.'
+                  MEMORY_ID = os.getenv('AGENTCORE_MEMORY_ID')
+
+                  # Configure the agent with a Bedrock model
+                  model = BedrockModel(
+                      model_id=model_id,
+                      max_tokens=4096,
+                      temperature=0.7
+                  )
+
+                  agent = Agent(
+                      model=model,
+                      system_prompt=system_prompt
+                  )
+
+                  # Memory client - lazy initialization
+                  _memory_client = None
+
+                  def get_memory_client():
+                      global _memory_client
+                      if _memory_client is None and MEMORY_ID:
+                          try:
+                              from bedrock_agentcore.memory import MemoryClient
+                              _memory_client = MemoryClient(region_name=aws_region)
+                          except Exception as e:
+                              _memory_client = False
+                      return _memory_client if _memory_client is not False else None
+
+                  def record_turn(actor_id, session_id, user_msg, assistant_msg):
+                      if not MEMORY_ID:
+                          print("record_turn: No MEMORY_ID configured")
+                          return
+                      
+                      memory_client = get_memory_client()
+                      if not memory_client:
+                          print("record_turn: Memory client not available")
+                          return
+                      
+                      try:
+                          print(f"record_turn: Attempting to save turn for actor={actor_id}, session={session_id}")
+                          print(f"record_turn: user_msg length={len(user_msg)}, assistant_msg length={len(assistant_msg)}")
+                          
+                          memory_client.create_event(
+                              memory_id=MEMORY_ID,
+                              actor_id=actor_id,
+                              session_id=session_id,
+                              messages=[(user_msg, 'USER'), (assistant_msg, 'ASSISTANT')]
+                          )
+                          
+                          print(f"record_turn: Successfully saved turn")
+                      except Exception as e:
+                          print(f"record_turn ERROR: {e}")
+                          traceback.print_exc()
+
+                  def retrieve_session_summary(actor_id, session_id):
+                      if not MEMORY_ID:
+                          return None
+                      memory_client = get_memory_client()
+                      if not memory_client:
+                          return None
+                      try:
+                          namespace = f'/summaries/{actor_id}/{session_id}'
+                          memories = memory_client.retrieve_memories(
+                              memory_id=MEMORY_ID,
+                              namespace=namespace,
+                              query='summarize the conversation so far'
+                          )
+                          items = memories or []
+                          if not items:
+                              return None
+                          first = items[0]
+                          return first.get('content') or first.get('summary') or str(first)
+                      except Exception:
+                          return None
+
+                  def retrieve_recent_turns(actor_id: str, session_id: str, max_turns: int = 5):
+                      """
+                      Fetch recent conversation turns from short-term memory.
+                      This provides immediate context within the current session.
+                      """
+                      if not MEMORY_ID:
+                          print("retrieve_recent_turns: No MEMORY_ID")
+                          return []
+                      
+                      memory_client = get_memory_client()
+                      if not memory_client:
+                          print("Memory client not available, skipping retrieve_recent_turns")
+                          return []
+
+                      try:
+                          print(f"Retrieving recent turns for actor={actor_id}, session={session_id}")
+                          
+                          response = memory_client.list_events(
+                              memory_id=MEMORY_ID,
+                              actor_id=actor_id,
+                              session_id=session_id,
+                              max_results=max_turns
+                          )
+                          
+                          # Handle the response - it's a list of events
+                          events = response if isinstance(response, list) else response.get('events', [])
+                          print(f"Got {len(events)} events")
+                          
+                          # Extract turns from events
+                          turns = []
+                          for event in events:
+                              if isinstance(event, dict) and 'payload' in event:
+                                  payload = event['payload']
+                                  # payload is a list of conversational messages
+                                  for msg_obj in payload:
+                                      if isinstance(msg_obj, dict) and 'conversational' in msg_obj:
+                                          conv = msg_obj['conversational']
+                                          role = conv.get('role', 'UNKNOWN')
+                                          content = conv.get('content', {})
+                                          text = content.get('text', '') if isinstance(content, dict) else str(content)
+                                          if text:
+                                              turns.append(f"{role}: {text}")
+                          
+                          print(f"Retrieved {len(turns)} recent message(s)")
+                          return turns
+                          
+                      except Exception as e:
+                          print(f"Warning: Failed to retrieve recent turns: {e}")
+                          traceback.print_exc()
+                          return []
+
+                  @app.entrypoint
+                  def invoke(payload):
+                      try:
+                          
+                          actor_id = payload.get('actor_id') or payload.get('user_id') or 'anonymous'
+                          session_id = payload.get('session_id') or payload.get('sessionId') or 'default-session'
+                          user_message = payload.get("prompt", "Hello! How can I help you today?")
+
+                          print(f"Processing message from actor={actor_id}, session={session_id}")
+
+                          # Build context from both short-term and long-term memory
+                          context_parts = []
+                          
+                          # Get long-term summary if available
+                          summary = retrieve_session_summary(actor_id, session_id)
+                          if summary:
+                              context_parts.append(f"Previous conversation summary:\n{summary}")
+                          
+                          # Get recent conversation turns for immediate context
+                          recent_turns = retrieve_recent_turns(actor_id, session_id, max_turns=5)
+                          if recent_turns:
+                              context_parts.append(f"Recent conversation:\n" + "\n".join(recent_turns))
+                          
+                          # Build the enriched input
+                          if context_parts:
+                              enriched_input = "\n\n".join(context_parts) + f"\n\nUser: {user_message}"
+                          else:
+                              enriched_input = user_message
+                          
+                          print(f"Calling agent...")
+                          result = agent(enriched_input)
+                          
+                          # Extract text from result
+                          assistant_message = None
+                          if hasattr(result, "message"):
+                              message_obj = result.message
+                              if isinstance(message_obj, dict):
+                                  if 'content' in message_obj and isinstance(message_obj['content'], list):
+                                      for content_block in message_obj['content']:
+                                          if isinstance(content_block, dict) and 'text' in content_block:
+                                              assistant_message = content_block['text']
+                                              break
+                                  elif 'text' in message_obj:
+                                      assistant_message = message_obj['text']
+                                  else:
+                                      assistant_message = str(message_obj)
+                              else:
+                                  assistant_message = str(message_obj)
+                          else:
+                              assistant_message = str(result)
+                          
+                          if not assistant_message:
+                              assistant_message = str(result)
+                          
+                          print(f"Response extracted")
+                          record_turn(actor_id, session_id, user_message, assistant_message)
+                          return assistant_message
+                          
+                      except Exception as e:
+                          print(f"ERROR: {e}")
+                          traceback.print_exc()
+                          return f"Error: {str(e)}"
+
+                  if __name__ == '__main__':
+                      app.run()
+
+
+                  AGENT_EOF
+                  fi
+                - echo "Writing requirements.txt"
+                - |
+                  cat > requirements.txt << 'EOF'
+                  boto3
+                  bedrock-agentcore
+                  strands-agents
+                  fastapi
+                  uvicorn
+                  EOF
+                - echo "Writing Dockerfile"
+                - |
+                  cat > Dockerfile << 'EOF'
+                  FROM public.ecr.aws/docker/library/python:3.11-slim
+                  WORKDIR /app
+                  COPY requirements.txt .
+                  RUN pip install --no-cache-dir -r requirements.txt
+                  COPY my_agent.py .
+                  EXPOSE 8080
+                  CMD ["python", "-u", "my_agent.py"]
+                  EOF
+            build:
+              commands:
+                - echo "Building Docker image..."
+                - docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG .
+                - echo "Tagging image..."
+                - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $REPOSITORY_URI:$IMAGE_TAG
+            post_build:
+              commands:
+                - echo "Pushing image to ECR..."
+                - docker push $REPOSITORY_URI:$IMAGE_TAG
+                - echo "Build completed"
+
+
+
+          
+      TimeoutInMinutes: 30
+
+  # ============================================
+  # Lambda Role for Custom Resource
+  # ============================================
+  CustomResourceLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'CustomResourceRole-${AgentName}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - !Ref CustomResourceLambdaPolicy
+
+  CustomResourceLambdaPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - codebuild:StartBuild
+              - codebuild:BatchGetBuilds
+            Resource:
+              - !GetAtt AgentBuildProject.Arn
+          
+          - Effect: Allow
+            Action:
+              - ecr:DescribeImages
+            Resource:
+              - !GetAtt AgentECRRepository.Arn
+
+  # ============================================
+  # Lambda Function to Trigger CodeBuild
+  # ============================================
+  TriggerBuildFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AgentName}-trigger-build'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt CustomResourceLambdaRole.Arn
+      Timeout: 900
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import time
+          import cfnresponse
+          
+          codebuild = boto3.client('codebuild')
+          ecr = boto3.client('ecr')
+          
+          def handler(event, context):
+              print(f"Event: {json.dumps(event)}")
+              
+              try:
+                  request_type = event['RequestType']
+                  properties = event['ResourceProperties']
+                  project_name = properties['ProjectName']
+                  repository_name = properties['RepositoryName']
+                  account_id = properties['AccountId']
+                  region = properties['Region']
+                  
+                  if request_type in ['Create', 'Update']:
+                      # Start the build
+                      print(f"Starting build for project: {project_name}")
+                      build_response = codebuild.start_build(projectName=project_name)
+                      build_id = build_response['build']['id']
+                      print(f"Build started: {build_id}")
+                      
+                      # Wait for build to complete
+                      max_wait = 900  # 15 minutes
+                      wait_interval = 30
+                      elapsed = 0
+                      
+                      while elapsed < max_wait:
+                          time.sleep(wait_interval)
+                          elapsed += wait_interval
+                          
+                          build_status = codebuild.batch_get_builds(ids=[build_id])
+                          status = build_status['builds'][0]['buildStatus']
+                          print(f"Build status after {elapsed}s: {status}")
+                          
+                          if status == 'SUCCEEDED':
+                              image_uri = f"{account_id}.dkr.ecr.{region}.amazonaws.com/{repository_name}:latest"
+                              print(f"Build succeeded! Image URI: {image_uri}")
+                              
+                              # Verify image exists in ECR
+                              time.sleep(10)  # Give ECR a moment to register the image
+                              try:
+                                  ecr.describe_images(
+                                      repositoryName=repository_name,
+                                      imageIds=[{'imageTag': 'latest'}]
+                                  )
+                                  print("Image verified in ECR")
+                              except Exception as e:
+                                  print(f"Warning: Could not verify image in ECR: {str(e)}")
+                              
+                              cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                                  'ImageUri': image_uri,
+                                  'BuildId': build_id
+                              })
+                              return
+                          
+                          elif status in ['FAILED', 'FAULT', 'TIMED_OUT', 'STOPPED']:
+                              error_msg = f"Build failed with status: {status}"
+                              print(error_msg)
+                              cfnresponse.send(event, context, cfnresponse.FAILED, {}, reason=error_msg)
+                              return
+                      
+                      # Timeout
+                      cfnresponse.send(event, context, cfnresponse.FAILED, {}, 
+                                     reason="Build did not complete within timeout period")
+                  
+                  elif request_type == 'Delete':
+                      # Nothing to clean up for the build itself
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  import traceback
+                  traceback.print_exc()
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {}, reason=str(e))
+
+  # ============================================
+  # Custom Resource to Trigger Build
+  # ============================================
+  TriggerBuild:
+    Type: Custom::TriggerBuild
+    Properties:
+      ServiceToken: !GetAtt TriggerBuildFunction.Arn
+      ProjectName: !Ref AgentBuildProject
+      RepositoryName: !Sub 'bedrock-agentcore-${AgentName}'
+      AccountId: !Ref AWS::AccountId
+      Region: !Ref AWS::Region
+      # Add a timestamp to force update on stack updates
+      Timestamp: !Sub '${AWS::StackName}-${AgentName}'
+
+  # ============================================
+  # AgentCore Execution Role
+  # ============================================
+  AgentCoreExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'AgentCoreExecutionRole-${AgentName}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AssumeRolePolicy
+            Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:*'
+      ManagedPolicyArns:
+        - !Ref AgentCoreExecutionPolicy
+
+  AgentCoreExecutionPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ECRImageAccess
+            Effect: Allow
+            Action:
+              - ecr:BatchGetImage
+              - ecr:GetDownloadUrlForLayer
+            Resource:
+              - !GetAtt AgentECRRepository.Arn
+              
+          - Sid: ECRTokenAccess
+            Effect: Allow
+            Action:
+              - ecr:GetAuthorizationToken
+            Resource: '*'
+            
+          - Effect: Allow
+            Action:
+              - logs:DescribeLogStreams
+              - logs:CreateLogGroup
+            Resource:
+              - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*'
+              
+          - Effect: Allow
+            Action:
+              - logs:DescribeLogGroups
+            Resource:
+              - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*'
+              
+          - Effect: Allow
+            Action:
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource:
+              - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*:log-stream:*'
+              
+          - Effect: Allow
+            Action:
+              - xray:PutTraceSegments
+              - xray:PutTelemetryRecords
+              - xray:GetSamplingRules
+              - xray:GetSamplingTargets
+            Resource: '*'
+            
+          - Effect: Allow
+            Resource: '*'
+            Action: cloudwatch:PutMetricData
+            Condition:
+              StringEquals:
+                cloudwatch:namespace: bedrock-agentcore
+                
+          - Sid: GetAgentAccessToken
+            Effect: Allow
+            Action:
+              - bedrock-agentcore:GetWorkloadAccessToken
+              - bedrock-agentcore:GetWorkloadAccessTokenForJWT
+              - bedrock-agentcore:GetWorkloadAccessTokenForUserId
+            Resource:
+              - !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default'
+              - !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/${AgentName}-*'
+              
+          - Sid: BedrockModelInvocation
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+            Resource:
+              - 'arn:aws:bedrock:*::foundation-model/*'
+              - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:*'
+              
+          - Sid: MemoryAPIAccess
+            Effect: Allow
+            Action:
+              - bedrock-agentcore:CreateEvent
+              - bedrock-agentcore:RetrieveMemories
+              - bedrock-agentcore:RetrieveMemoryRecords
+              - bedrock-agentcore:GetMemory
+              - bedrock-agentcore:ListMemories
+              - bedrock-agentcore:ListEvents
+            Resource:
+              - !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:memory/*'
+
+  # ============================================
+  # AgentCore Runtime
+  # ============================================
+  AgentCoreRuntime:
+    Type: AWS::BedrockAgentCore::Runtime
+    DependsOn: 
+      - TriggerBuild
+      - AgentCoreExecutionRole
+      - AgentCoreMemory
+    Properties:
+      AgentRuntimeName: !Ref AgentName
+      Description: !Sub 'Strands Agent Runtime for ${AgentName}'
+      RoleArn: !GetAtt AgentCoreExecutionRole.Arn
+      AgentRuntimeArtifact:
+        ContainerConfiguration:
+          ContainerUri: !GetAtt TriggerBuild.ImageUri
+      NetworkConfiguration:
+        NetworkMode: PUBLIC
+      ProtocolConfiguration: HTTP
+      EnvironmentVariables:
+        BEDROCK_MODEL_ID: !Ref BedrockModelId
+        AWS_REGION: !Ref AWS::Region
+        AGENT_SYSTEM_PROMPT: !Ref AgentSystemPrompt
+        IMAGE_DIGEST: !Ref ImageDigest
+        AGENTCORE_MEMORY_ID: !GetAtt AgentCoreMemory.MemoryId
+        
+
+        
+      Tags:
+        Environment: production
+        ManagedBy: CloudFormation
+        Framework: Strands
+        AgentName: !Ref AgentName
+        UpdateTrigger: !Ref RuntimeUpdateTrigger
+
+  AgentCoreMemoryExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-AgentCoreMemoryRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AssumeRolePolicy
+            Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref 'AWS::AccountId'
+              ArnLike:
+                'aws:SourceArn': !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:*'
+      Policies:
+        - PolicyName: BedrockMemoryAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                  - bedrock:GetFoundationModel
+                  - bedrock:ListFoundationModels
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - memorydb:*
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock/*'
+      Tags:
+        - Key: Project
+          Value: !Ref AWS::StackName
+
+  AgentCoreMemory:
+    Type: AWS::BedrockAgentCore::Memory
+    Properties:
+      Name: !Sub '${AgentName}Memory'
+      Description: !Sub 'Memory store for ${AgentName}'
+      # Short-term memory: how long raw events are kept (min 7, max 365 days)
+      EventExpiryDuration: 30
+
+      # If you decided to include the role above; otherwise you can omit this line
+      MemoryExecutionRoleArn: !GetAtt AgentCoreMemoryExecutionRole.Arn
+
+      # Long-term memory: summarization strategy
+      MemoryStrategies:
+        - SummaryMemoryStrategy:
+            Name: SessionSummarizer
+            Type: SUMMARIZATION
+            # Namespace pattern where summaries are stored
+            # e.g. /summaries/User123/SessionABC
+            Namespaces:
+              - "/summaries/{actorId}/{sessionId}"
+
+      Tags:
+        Project: !Ref AWS::StackName
+        Component: AgentCoreMemory
+
+
+  # ============================================
+  # Production Endpoint
+  # ============================================
+  ProductionEndpoint:
+    Type: AWS::BedrockAgentCore::RuntimeEndpoint
+    Properties:
+      Name: !Sub "${AgentName}_prod${EndpointSuffix}"
+      AgentRuntimeId: !GetAtt AgentCoreRuntime.AgentRuntimeId
+      AgentRuntimeVersion: !GetAtt AgentCoreRuntime.AgentRuntimeVersion
+      Description: Production endpoint for Strands agent
+      Tags:
+        Environment: production
+
+  # EventBridge Auto-Update Components
+  # Insert these after the ProductionEndpoint resource in your template
+
+  # ============================================
+  # PRODUCTION AUTO-UPDATE: EventBridge + Lambda
+  # ============================================
+  
+  RuntimeStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AgentName}-runtime-state'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: RuntimeId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: RuntimeId
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: TTL
+        Enabled: true
+
+  RuntimeUpdaterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'RuntimeUpdater-${AgentName}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: UpdateRuntimePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # DynamoDB
+              - Effect: Allow
+                Action:
+                  - dynamodb:*
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt RuntimeStateTable.Arn
+              
+              # ECR - Full permissions needed for stack updates
+              - Effect: Allow
+                Action:
+                  - ecr:*
+                Resource: '*'
+              
+              # CloudFormation - Full control of this stack
+              - Effect: Allow
+                Action:
+                  - cloudformation:*
+                Resource: !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*'
+              
+              # API Gateway - Needed for stack updates
+              - Effect: Allow
+                Action:
+                  - apigateway:*
+                Resource: '*'
+              
+              # IAM - PassRole for CloudFormation
+              - Effect: Allow
+                Action:
+                  - iam:*
+                  - iam:GetRole
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:GetRolePolicy
+                Resource: '*'
+              
+              # Lambda - For updating functions
+              - Effect: Allow
+                Action:
+                  - lambda:*
+                Resource: '*'
+              
+              # S3 - For CloudFormation templates
+              - Effect: Allow
+                Action:
+                  - s3:*
+                Resource: '*'
+              
+              # Bedrock AgentCore - For runtime updates
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:*
+                Resource: '*'
+
+              - Effect: Allow
+                Action:
+                  - dynamodb:*
+                  - codebuild:*
+                  - events:*
+                  - ecr:*
+                Resource: '*'
+
+
+  RuntimeUpdaterFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AgentName}-runtime-updater'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt RuntimeUpdaterRole.Arn
+      Timeout: 300
+      MemorySize: 512
+      Environment:
+        Variables:
+          RUNTIME_ID: !GetAtt AgentCoreRuntime.AgentRuntimeId
+          STACK_NAME: !Ref AWS::StackName
+          STATE_TABLE: !Ref RuntimeStateTable
+          REPO_NAME: !Sub 'bedrock-agentcore-${AgentName}'
+      Code:
+        ZipFile: |
+          import boto3, json, os
+          import random
+          from datetime import datetime, timedelta
+
+          cfn = boto3.client('cloudformation')
+          ecr = boto3.client('ecr')
+          dynamodb = boto3.resource('dynamodb')
+
+          def handler(event, context):
+              print(f"Received event: {json.dumps(event)}")
+
+              detail = event.get('detail', {})
+              action_type = detail.get('action-type')
+              image_tag = detail.get('image-tag')
+              image_digest = detail.get('image-digest')
+              repo = detail.get('repository-name')
+
+              # Only process PUSH:latest
+              if action_type != 'PUSH' or image_tag != 'latest':
+                  print("Ignoring non-latest action")
+                  return {'status': 'ignored'}
+
+              if repo != os.environ['REPO_NAME']:
+                  print("Ignoring wrong repo")
+                  return {'status': 'ignored'}
+
+              runtime_id = os.environ['RUNTIME_ID']
+              table = dynamodb.Table(os.environ['STATE_TABLE'])
+
+              # Read previous digest
+              try:
+                  existing = table.get_item(Key={'RuntimeId': runtime_id})
+                  current_digest = existing.get('Item', {}).get('ImageDigest', '')
+              except Exception as e:
+                  print(f"No previous state: {e}")
+                  current_digest = ''
+
+              if current_digest == image_digest:
+                  print(f"Image unchanged ({image_digest})")
+                  return {'status': 'unchanged'}
+
+              print(f"New image detected! old={current_digest}, new={image_digest}")
+
+              # Create unique suffix for endpoint
+              num = random.randint(1, 50)
+              suffix = f"v{num}"
+
+              stack_name = os.environ['STACK_NAME']
+
+              try:
+                  # Load current stack parameters
+                  stack_info = cfn.describe_stacks(StackName=stack_name)
+                  current_params = stack_info['Stacks'][0].get('Parameters', []) or []
+
+                  # Extract the current AgentSystemPrompt
+                  agent_system_prompt = ""
+                  for p in current_params:
+                      if p['ParameterKey'] == 'AgentSystemPrompt':
+                          agent_system_prompt = p.get('ParameterValue', '')
+                          break
+
+                  # Extract the PREVIOUS ImageDigest (just for reference)
+                  # but we will override it anyway
+                  prev_params = [
+                      {'ParameterKey': p['ParameterKey'], 'UsePreviousValue': True}
+                      for p in current_params
+                      if p['ParameterKey'] not in ['EndpointSuffix', 'AgentSystemPrompt', 'ImageDigest']
+                  ]
+
+                  # NEW: ImageDigest forces runtime update
+                  update_params = [
+                      {'ParameterKey': 'EndpointSuffix', 'ParameterValue': suffix},
+                      {'ParameterKey': 'RuntimeUpdateTrigger', 'ParameterValue': 'editupdate'},
+                      {'ParameterKey': 'AgentSystemPrompt', 'ParameterValue': agent_system_prompt},
+                      {'ParameterKey': 'ImageDigest', 'ParameterValue': image_digest}
+                  ] + prev_params
+
+                  print("Triggering CloudFormation update...")
+
+                  cfn.update_stack(
+                      StackName=stack_name,
+                      UsePreviousTemplate=True,
+                      Parameters=update_params,
+                      Capabilities=['CAPABILITY_NAMED_IAM'],
+                      Tags=[
+                          {'Key': 'LastImageUpdate', 'Value': datetime.utcnow().isoformat()},
+                          {'Key': 'ImageDigest', 'Value': image_digest}
+                      ]
+                  )
+
+                  print("Update started successfully.")
+
+                  # Save state
+                  table.put_item(Item={
+                      'RuntimeId': runtime_id,
+                      'ImageDigest': image_digest,
+                      'UpdatedAt': datetime.utcnow().isoformat(),
+                      'TTL': int((datetime.utcnow() + timedelta(days=30)).timestamp())
+                  })
+
+                  return {
+                      'status': 'updated',
+                      'imageDigest': image_digest,
+                      'endpointSuffix': suffix,
+                      'stackUpdate': 'initiated'
+                  }
+
+              except cfn.exceptions.ValidationError as e:
+                  if 'No updates are to be performed' in str(e):
+                      print("No updates to perform.")
+                      table.put_item(Item={
+                          'RuntimeId': runtime_id,
+                          'ImageDigest': image_digest,
+                          'UpdatedAt': datetime.utcnow().isoformat(),
+                          'TTL': int((datetime.utcnow() + timedelta(days=30)).timestamp())
+                      })
+                      return {'status': 'already_current'}
+                  else:
+                      raise
+
+              except Exception as e:
+                  print(f"Error updating stack: {str(e)}")
+                  raise
+
+
+
+
+  ECRImagePushRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${AgentName}-ecr-push-detector'
+      Description: Auto-trigger runtime update on ECR image push
+      EventPattern:
+        source:
+          - aws.ecr
+        detail-type:
+          - ECR Image Action
+        detail:
+          action-type:
+            - PUSH
+          repository-name:
+            - !Sub 'bedrock-agentcore-${AgentName}'
+          image-tag:
+            - latest
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt RuntimeUpdaterFunction.Arn
+          Id: RuntimeUpdaterTarget
+
+  EventBridgeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RuntimeUpdaterFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ECRImagePushRule.Arn
+
+
+
+  # Strands editor
+
+  EditorLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: EditorInline
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Read/Write code & backups in the same artifacts bucket
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub '${BuildArtifactsBucket.Arn}'
+                  - !Sub '${BuildArtifactsBucket.Arn}/*'
+              # Start and poll CodeBuild
+              - Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: !GetAtt AgentBuildProject.Arn
+
+  CodeEditorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt EditorLambdaRole.Arn
+      Timeout: 60
+      MemorySize: 512
+      Environment:
+        Variables:
+          CODE_BUCKET: !Ref BuildArtifactsBucket
+          CODE_KEY: !Sub '${AgentName}/agent_code.py'
+          PROJECT_NAME: !Ref AgentBuildProject
+      Code:
+        ZipFile: |
+          import json, os, boto3
+          from datetime import datetime
+          from botocore.config import Config
+
+          current_region = os.environ.get('AWS_REGION', 'us-east-1')
+        
+          s3 = boto3.client(
+              's3',
+              region_name=current_region,
+              config=Config(
+                  signature_version='s3v4',
+                  s3={'addressing_style': 'virtual'} # Ensures consistent hostname
+              )
+          )
+          cb = boto3.client('codebuild')
+
+          def _resp(code, body):
+              return {
+                'statusCode': code,
+                'headers': {
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Allow-Headers': 'Content-Type',
+                  'Access-Control-Allow-Methods': 'GET,POST,OPTIONS'
+                },
+                'body': json.dumps(body)
+              }
+
+          def handler(event, context):
+              method = event.get('httpMethod', '')
+              path = event.get('path', '')
+              if method == 'OPTIONS':
+                  return _resp(200, {})
+
+              bucket = os.environ['CODE_BUCKET']
+              key = os.environ['CODE_KEY']
+              backups_prefix = f"{os.environ['CODE_KEY'].rsplit('/',1)[0]}/backups/"
+
+              # ---------- GET /get-code ----------
+              if path.endswith('/get-code') and method == 'GET':
+                  try:
+                      obj = s3.get_object(Bucket=bucket, Key=key)
+                      code = obj['Body'].read().decode('utf-8')
+                  except s3.exceptions.NoSuchKey:
+                      # Default template EXACTLY aligned with BuildSpec's my_agent.py
+                      code = (
+                        "# Strands Agent Code\n"
+                        "from bedrock_agentcore.runtime import BedrockAgentCoreApp\n"
+                        "from strands import Agent\n"
+                        "from strands.models import BedrockModel\n"
+                        "import os\n"
+                        "import traceback\n"
+                        "\n"
+                        "# Initialize the AgentCore app\n"
+                        "app = BedrockAgentCoreApp()\n"
+                        "\n"
+                        "# Get configuration from environment variables\n"
+                        "model_id = os.getenv('BEDROCK_MODEL_ID', 'anthropic.claude-3-5-sonnet-20241022-v2:0')\n"
+                        "aws_region = os.getenv('AWS_REGION', 'us-west-2')\n"
+                        "system_prompt = 'You are a helpful AI assistant.'\n"
+                        "MEMORY_ID = os.getenv('AGENTCORE_MEMORY_ID')\n"
+                        "\n"
+                        "# Configure the agent with a Bedrock model\n"
+                        "model = BedrockModel(\n"
+                        "    model_id=model_id,\n"
+                        "    max_tokens=4096,\n"
+                        "    temperature=0.7\n"
+                        ")\n"
+                        "\n"
+                        "agent = Agent(\n"
+                        "    model=model,\n"
+                        "    system_prompt=system_prompt\n"
+                        ")\n"
+                        "\n"
+                        "# Memory client - lazy initialization\n"
+                        "_memory_client = None\n"
+                        "\n"
+                        "def get_memory_client():\n"
+                        "    global _memory_client\n"
+                        "    if _memory_client is None and MEMORY_ID:\n"
+                        "        try:\n"
+                        "            from bedrock_agentcore.memory import MemoryClient\n"
+                        "            _memory_client = MemoryClient(region_name=aws_region)\n"
+                        "        except Exception as e:\n"
+                        "            _memory_client = False\n"
+                        "    return _memory_client if _memory_client is not False else None\n"
+                        "\n"
+                        "def record_turn(actor_id, session_id, user_msg, assistant_msg):\n"
+                        "    if not MEMORY_ID:\n"
+                        "        return\n"
+                        "    memory_client = get_memory_client()\n"
+                        "    if not memory_client:\n"
+                        "        return\n"
+                        "    try:\n"
+                        "        memory_client.create_event(\n"
+                        "            memory_id=MEMORY_ID,\n"
+                        "            actor_id=actor_id,\n"
+                        "            session_id=session_id,\n"
+                        "            messages=[(user_msg, 'USER'), (assistant_msg, 'ASSISTANT')]\n"
+                        "        )\n"
+                        "    except Exception:\n"
+                        "        pass\n"
+                        "\n"
+                        "def retrieve_session_summary(actor_id, session_id):\n"
+                        "    if not MEMORY_ID:\n"
+                        "        return None\n"
+                        "    memory_client = get_memory_client()\n"
+                        "    if not memory_client:\n"
+                        "        return None\n"
+                        "    try:\n"
+                        "        namespace = f'/summaries/{actor_id}/{session_id}'\n"
+                        "        memories = memory_client.retrieve_memories(\n"
+                        "            memory_id=MEMORY_ID,\n"
+                        "            namespace=namespace,\n"
+                        "            query='summarize the conversation so far'\n"
+                        "        )\n"
+                        "        items = memories or []\n"
+                        "        if not items:\n"
+                        "            return None\n"
+                        "        first = items[0]\n"
+                        "        return first.get('content') or first.get('summary') or str(first)\n"
+                        "    except Exception:\n"
+                        "        return None\n"
+                        "\n"
+                        "def retrieve_recent_turns(actor_id, session_id, max_turns=5):\n"
+                        "    if not MEMORY_ID:\n"
+                        "        return []\n"
+                        "    memory_client = get_memory_client()\n"
+                        "    if not memory_client:\n"
+                        "        return []\n"
+                        "    try:\n"
+                        "        response = memory_client.list_events(\n"
+                        "            memory_id=MEMORY_ID,\n"
+                        "            actor_id=actor_id,\n"
+                        "            session_id=session_id,\n"
+                        "            max_results=max_turns\n"
+                        "        )\n"
+                        "        events = response if isinstance(response, list) else response.get('events', [])\n"
+                        "        turns = []\n"
+                        "        for event in events:\n"
+                        "            if isinstance(event, dict) and 'payload' in event:\n"
+                        "                payload = event['payload']\n"
+                        "                for msg_obj in payload:\n"
+                        "                    if isinstance(msg_obj, dict) and 'conversational' in msg_obj:\n"
+                        "                        conv = msg_obj['conversational']\n"
+                        "                        role = conv.get('role', 'UNKNOWN')\n"
+                        "                        content = conv.get('content', {})\n"
+                        "                        text = content.get('text', '') if isinstance(content, dict) else str(content)\n"
+                        "                        if text:\n"
+                        "                            turns.append(f'{role}: {text}')\n"
+                        "        return turns\n"
+                        "    except Exception:\n"
+                        "        return []\n"
+                        "\n"
+                        "@app.entrypoint\n"
+                        "def invoke(payload):\n"
+                        "    try:\n"
+                        "        actor_id = payload.get('actor_id') or payload.get('user_id') or 'anonymous'\n"
+                        "        session_id = payload.get('session_id') or payload.get('sessionId') or 'default-session'\n"
+                        "        user_message = payload.get('prompt', 'Hello! How can I help you today?')\n"
+                        "        \n"
+                        "        context_parts = []\n"
+                        "        summary = retrieve_session_summary(actor_id, session_id)\n"
+                        "        if summary:\n"
+                        "            context_parts.append(f'Previous conversation summary:\\n{summary}')\n"
+                        "        recent_turns = retrieve_recent_turns(actor_id, session_id, max_turns=5)\n"
+                        "        if recent_turns:\n"
+                        "            context_parts.append(f\"Recent conversation:\\n\" + \"\\n\".join(recent_turns))\n"
+                        "        \n"
+                        "        if context_parts:\n"
+                        "            enriched_input = \"\\n\\n\".join(context_parts) + f\"\\n\\nUser: {user_message}\"\n"
+                        "        else:\n"
+                        "            enriched_input = user_message\n"
+                        "        \n"
+                        "        result = agent(enriched_input)\n"
+                        "        assistant_message = None\n"
+                        "        if hasattr(result, 'message'):\n"
+                        "            message_obj = result.message\n"
+                        "            if isinstance(message_obj, dict):\n"
+                        "                if 'content' in message_obj and isinstance(message_obj['content'], list):\n"
+                        "                    for content_block in message_obj['content']:\n"
+                        "                        if isinstance(content_block, dict) and 'text' in content_block:\n"
+                        "                            assistant_message = content_block['text']\n"
+                        "                            break\n"
+                        "                elif 'text' in message_obj:\n"
+                        "                    assistant_message = message_obj['text']\n"
+                        "                else:\n"
+                        "                    assistant_message = str(message_obj)\n"
+                        "            else:\n"
+                        "                assistant_message = str(message_obj)\n"
+                        "        else:\n"
+                        "            assistant_message = str(result)\n"
+                        "        if not assistant_message:\n"
+                        "            assistant_message = str(result)\n"
+                        "        \n"
+                        "        record_turn(actor_id, session_id, user_message, assistant_message)\n"
+                        "        return assistant_message\n"
+                        "    except Exception as e:\n"
+                        "        return f'Error: {str(e)}'\n"
+                        "\n"
+                        "if __name__ == '__main__':\n"
+                        "    app.run()\n"
+                      )
+                  return _resp(200, {'code': code})
+
+              # ---------- POST /deploy-code ----------
+              if path.endswith('/deploy-code') and method == 'POST':
+                  body = json.loads(event.get('body', '{}'))
+                  code = body.get('code', '')
+                  if not code:
+                      return _resp(400, {'error': 'code is required'})
+
+                  ts = datetime.utcnow().isoformat()
+
+                  # Save active version
+                  s3.put_object(Bucket=bucket, Key=key, Body=code.encode('utf-8'),
+                                ContentType='text/plain',
+                                Metadata={'timestamp': ts})
+
+                  # Save backup
+                  backup_key = f"{backups_prefix}{ts}.py"
+                  s3.put_object(Bucket=bucket, Key=backup_key, Body=code.encode('utf-8'),
+                                ContentType='text/plain')
+
+                  # Start build - EventBridge will handle runtime update automatically!
+                  proj = os.environ['PROJECT_NAME']
+                  start = cb.start_build(projectName=proj)
+                  build_id = start['build']['id']
+
+                  return _resp(200, {
+                      'message': 'Build started - runtime will auto-update via EventBridge when complete',
+                      'buildId': build_id,
+                      'timestamp': ts,
+                      'autoUpdate': True
+                  })
+
+              # ---------- GET /list-backups (optional helper) ----------
+              if path.endswith('/list-backups') and method == 'GET':
+                  resp = s3.list_objects_v2(Bucket=bucket, Prefix=backups_prefix)
+                  items = [{
+                      'key': o['Key'],
+                      'lastModified': o['LastModified'].isoformat(),
+                      'size': o['Size']
+                  } for o in resp.get('Contents', [])]
+                  return _resp(200, {'backups': items})
+
+              return _resp(404, {'error': 'Not found'})
+
+
+
+  EditorAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${AWS::StackName}-editor-api'
+      EndpointConfiguration: { Types: [REGIONAL] }
+
+  GetCodeResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref EditorAPI
+      ParentId: !GetAtt EditorAPI.RootResourceId
+      PathPart: get-code
+
+  DeployCodeResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref EditorAPI
+      ParentId: !GetAtt EditorAPI.RootResourceId
+      PathPart: deploy-code
+
+  ListBackupsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref EditorAPI
+      ParentId: !GetAtt EditorAPI.RootResourceId
+      PathPart: list-backups
+
+  GetCodeMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref EditorAPI
+      ResourceId: !Ref GetCodeResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CodeEditorFunction.Arn}/invocations'
+
+  DeployCodeMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref EditorAPI
+      ResourceId: !Ref DeployCodeResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CodeEditorFunction.Arn}/invocations'
+
+  ListBackupsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref EditorAPI
+      ResourceId: !Ref ListBackupsResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CodeEditorFunction.Arn}/invocations'
+
+  # OPTIONS (CORS) for all three
+  GetCodeOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref EditorAPI
+      ResourceId: !Ref GetCodeResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # (Duplicate OPTIONS blocks for DeployCodeResource and ListBackupsResource similarly)
+  DeployCodeOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref EditorAPI
+      ResourceId: !Ref DeployCodeResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  ListBackupsOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref EditorAPI
+      ResourceId: !Ref ListBackupsResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+
+  EditorAPIDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - GetCodeMethod
+      - GetCodeOptionsMethod
+      - DeployCodeMethod
+      - ListBackupsMethod
+      - DeployCodeOptionsMethod
+      - ListBackupsOptionsMethod
+    Properties:
+      RestApiId: !Ref EditorAPI
+      StageName: prod
+
+  EditorInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref CodeEditorFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EditorAPI}/*'
+
+
+  # 5) Frontend (S3 + custom resource uploader)
+
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketName: !Sub 'strands-editor-${AgentName}-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # Custom resource to clean up FrontendBucket on stack deletion
+  FrontendBucketCleanup:
+    Type: Custom::S3Cleanup
+    DependsOn: FrontendBucket
+    Properties:
+      ServiceToken: !GetAtt CleanupFunction.Arn
+      ResourceType: S3
+      BucketName: !Ref FrontendBucket
+
+  FrontendUploaderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3UploadPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub '${FrontendBucket.Arn}'
+                  - !Sub '${FrontendBucket.Arn}/*'
+
+
+  FrontendUploaderFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: 
+      - EditorAPIDeployment
+      - FrontendBucket
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt FrontendUploaderRole.Arn
+      Runtime: python3.11
+      Timeout: 120
+      Code:
+        ZipFile: |
+          import json
+          import logging
+          import urllib.request
+          import traceback
+          import boto3
+          import os
+          from botocore.config import Config
+
+          log = logging.getLogger(__name__)
+          log.setLevel(logging.INFO)
+
+          def send_response(event, context, status, data=None, reason=None, physical_id=None):
+              """Send response to CloudFormation"""
+              try:
+                  body = {
+                      'Status': status,
+                      'Reason': reason or f"See CloudWatch Log Stream: {getattr(context, 'log_stream_name', 'N/A')}",
+                      'PhysicalResourceId': physical_id or getattr(context, 'log_stream_name', 'frontend-uploader'),
+                      'StackId': event['StackId'],
+                      'RequestId': event['RequestId'],
+                      'LogicalResourceId': event['LogicalResourceId'],
+                      'NoEcho': False,
+                      'Data': data or {}
+                  }
+                  payload = json.dumps(body).encode('utf-8')
+                  log.info(f"Sending response: {body}")
+                  req = urllib.request.Request(
+                      event['ResponseURL'], 
+                      data=payload, 
+                      method='PUT',
+                      headers={'content-type': '', 'content-length': str(len(payload))}
+                  )
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      log.info(f"CFN response sent successfully: {resp.status}")
+              except Exception as e:
+                  log.error(f"Failed to send CFN response: {str(e)}")
+                  log.error(traceback.format_exc())
+
+          def handler(event, context):
+              log.info(f"Received event: {json.dumps(event)}")
+              
+              try:
+                  req_type = event.get('RequestType')
+                  props = event.get('ResourceProperties', {})
+                  bucket = props.get('BucketName')
+                  
+                  if not bucket:
+                      send_response(event, context, 'FAILED', {}, 'BucketName not provided')
+                      return
+                  
+                  current_region = os.environ.get('AWS_REGION', 'us-east-1')
+        
+                  s3 = boto3.client(
+                      's3',
+                      region_name=current_region,
+                      config=Config(
+                          signature_version='s3v4',
+                          s3={'addressing_style': 'virtual'} # Ensures consistent hostname
+                      )
+                  )
+
+                  if req_type in ('Create', 'Update'):
+                      api_endpoint = props.get('ApiEndpoint', '')
+                      log.info(f"Uploading to bucket: {bucket}, API endpoint: {api_endpoint}")
+                      
+                      html = f"""<!doctype html>
+          <html><head>
+            <meta charset="utf-8"/>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+            <title>Strands Agent Code Editor</title>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+            <style>
+              html,body,#editor {{height:100%; margin:0; background:#1e1e1e}}
+              .bar {{background:#252526; padding:12px; color:#d4d4d4; display:flex; gap:8px; align-items:center}}
+              .btn {{padding:8px 12px; background:#0e639c; border:none; color:#fff; border-radius:4px; cursor:pointer}}
+              .btn[disabled] {{opacity:.5; cursor:not-allowed}}
+              #status {{position:fixed; top:8px; right:8px; background:#333; color:#fff; padding:8px 12px; border-radius:4px; display:none}}
+              #wrap {{position:absolute; inset:48px 0 0 0}}
+            </style>
+          </head>
+          <body>
+            <div class="bar">
+              <button id="load" class="btn" style="display:none">Load</button>
+              <button id="deploy" class="btn" disabled style="margin-left: auto;">Save and Deploy</button>
+              <span id="msg"></span>
+            </div>
+            <div id="wrap"><div id="editor"></div></div>
+            <div id="status"></div>
+            <script>
+              const API = '{api_endpoint}';
+              let editor, original = '';
+              function toast(t){{const s=document.getElementById('status');s.textContent=t;s.style.display='block';setTimeout(()=>s.style.display='none',3000);}}
+              require.config({{paths:{{vs:'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs'}}}});
+              require(['vs/editor/editor.main'], function(){{
+                editor = monaco.editor.create(document.getElementById('editor'), {{
+                  value: '',
+                  language:'python', theme:'vs-dark', automaticLayout:true, minimap:{{enabled:true}},
+                  wordWrap:'on', fontSize:14
+                }});
+                editor.onDidChangeModelContent(()=>{{
+                  document.getElementById('deploy').disabled = (editor.getValue()===original);
+                }});
+              }});
+              async function loadCode(){{
+                const r = await fetch(`${{API}}/get-code`, {{method:'GET'}});
+                if(!r.ok) throw new Error(await r.text());
+                const data = await r.json();
+                original = data.code; editor.setValue(data.code); toast('Loaded');
+              }}
+              async function deploy(){{
+                const code = editor.getValue();
+                const r = await fetch(`${{API}}/deploy-code`, {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{code}})}});
+                if(!r.ok) throw new Error(await r.text());
+                const data = await r.json(); original=code; document.getElementById('deploy').disabled=true; toast('Build started: '+data.buildId);
+              }}
+              document.getElementById('load').onclick=loadCode;
+              document.getElementById('deploy').onclick=deploy;
+
+              window.addEventListener('DOMContentLoaded', function() {{
+                loadCode();
+              }});
+            </script>
+          </body></html>"""
+                      
+                      # Upload/overwrite editor page
+                      s3.put_object(Bucket=bucket, Key='index.html', Body=html.encode('utf-8'), ContentType='text/html')
+                      log.info("Successfully uploaded index.html")
+                      
+                      # Presign for convenience (7 days)
+                      presigned = s3.generate_presigned_url('get_object', Params={'Bucket': bucket, 'Key': 'index.html'}, ExpiresIn=604800)
+                      log.info(f"Generated presigned URL: {presigned[:50]}...")
+                      
+                      send_response(event, context, 'SUCCESS', {'EditorURL': presigned})
+                      return
+
+                  if req_type == 'Delete':
+                      # Best-effort cleanup; always send a response
+                      try:
+                          s3.delete_object(Bucket=bucket, Key='index.html')
+                          log.info("Successfully deleted index.html")
+                      except Exception as e:
+                          log.warning(f"Delete index.html failed (may not exist): {e}")
+                      send_response(event, context, 'SUCCESS', {})
+                      return
+
+                  # Fallback (unknown RequestType)
+                  log.warning(f"Unknown RequestType: {req_type}")
+                  send_response(event, context, 'SUCCESS', {})
+                  
+              except Exception as e:
+                  log.error(f"Custom resource error: {str(e)}")
+                  log.error(traceback.format_exc())
+                  send_response(event, context, 'FAILED', {}, str(e))
+
+
+  UploadFrontend:
+    Type: Custom::UploadFrontend
+    DependsOn:
+      - FrontendBucket
+      - FrontendUploaderFunction
+      - EditorAPIDeployment
+    Properties:
+      ServiceToken: !GetAtt FrontendUploaderFunction.Arn
+      BucketName: !Ref FrontendBucket
+      ApiEndpoint: !Sub 'https://${EditorAPI}.execute-api.${AWS::Region}.amazonaws.com/prod'
+
+
+  FrontendChatBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # Custom resource to clean up FrontendChatBucket on stack deletion
+  FrontendChatBucketCleanup:
+    Type: Custom::S3Cleanup
+    DependsOn: FrontendChatBucket
+    Properties:
+      ServiceToken: !GetAtt CleanupFunction.Arn
+      ResourceType: S3
+      BucketName: !Ref FrontendChatBucket
+
+  FrontendChatUploaderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3UploadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub ${FrontendChatBucket.Arn}/*
+
+  FrontendChatUploaderFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt FrontendChatUploaderRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import os
+          from botocore.config import Config
+          
+          def handler(event, context):
+              if event['RequestType'] in ['Create', 'Update']:
+                  try:
+                      current_region = os.environ.get('AWS_REGION', 'us-east-1')
+        
+                      s3 = boto3.client(
+                          's3',
+                          region_name=current_region,
+                          config=Config(
+                              signature_version='s3v4',
+                              s3={'addressing_style': 'virtual'} # Ensures consistent hostname
+                          )
+                      )
+                      bucket_name = event['ResourceProperties']['BucketName']
+                      api_endpoint = event['ResourceProperties']['ApiEndpoint']
+                      
+                      html_content = """
+                      <!DOCTYPE html>
+                      <html>
+                      <head>
+                          <title>AgentCore Chat</title>
+                          <style>
+                          :root {
+                              --v2-bg-main: #0f172a;
+                              --v2-card-bg: #1e293b;
+                              --v2-header-bg: #2d5a9e;
+                              --v2-user-bubble: #3b82f6;
+                              --v2-bot-bubble: #334155;
+                              --v2-text-primary: #f8fafc;
+                              --v2-text-secondary: #94a3b8;
+                              --v2-border: rgba(51, 65, 85, 0.5);
+                              --header-height: 80px;
+                          }
+
+                          body {
+                              font-family: 'Inter', -apple-system, system-ui, sans-serif;
+                              margin: 0;
+                              padding: 0;
+                              height: 100vh;
+                              display: flex;
+                              flex-direction: column;
+                              align-items: center;
+                              justify-content: center;
+                              background: var(--v2-bg-main);
+                              color: var(--v2-text-primary);
+                              overflow: hidden;
+                          }
+
+                          /* Fixed Header from H1 */
+                          h1 {
+                              position: absolute;
+                              width: 90%;
+                              max-width: 700px;
+                              height: var(--header-height);
+                              background: var(--v2-header-bg);
+                              color: white;
+                              margin: 0;
+                              display: flex;
+                              flex-direction: column;
+                              /* Stack title and subtext */
+                              align-items: center;
+                              justify-content: center;
+                              font-size: 16px;
+                              font-weight: 600;
+                              border-radius: 16px 16px 0 0;
+                              z-index: 20;
+                              /* Pulls it flush with the top of the chat-container */
+                              top: calc(50% - 292px);
+                              box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+                          }
+
+                          /* Subtext Injection */
+                          h1::after {
+                              content: "Powered by Amazon Bedrock";
+                              font-size: 11px;
+                              font-weight: 400;
+                              opacity: 0.9;
+                              margin-top: 4px;
+                          }
+
+                          #chat-container,
+                          #input-container {
+                              width: 90%;
+                              max-width: 700px;
+                              box-sizing: border-box;
+                          }
+
+                          #chat-container {
+                              height: 500px;
+                              overflow-y: auto;
+                              background-color: var(--v2-card-bg);
+                              /* Pad the top so initial messages don't start under the header */
+                              padding: calc(var(--header-height) + 10px) 30px 20px 30px;
+                              border-radius: 16px 16px 0 0;
+                              box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.4);
+                              display: flex;
+                              flex-direction: column;
+                              gap: 16px;
+                              position: relative;
+                              border: 1px solid var(--v2-border);
+                              border-bottom: none;
+                              scroll-behavior: smooth;
+                          }
+
+                          /* Scrollbar Styling */
+                          #chat-container::-webkit-scrollbar {
+                              width: 6px;
+                          }
+
+                          #chat-container::-webkit-scrollbar-thumb {
+                              background: #475569;
+                              border-radius: 10px;
+                          }
+
+                          #input-container {
+                              display: flex;
+                              align-items: center;
+                              background: var(--v2-card-bg);
+                              padding: 15px 30px 25px 30px;
+                              border-radius: 0 0 16px 16px;
+                              box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.4);
+                              border: 1px solid var(--v2-border);
+                              border-top: 1px solid rgba(255, 255, 255, 0.05);
+                              gap: 12px;
+                          }
+
+                          #message-input {
+                              flex: 1;
+                              padding: 12px 20px;
+                              background: #0f172a;
+                              border: 1px solid var(--v2-border);
+                              border-radius: 25px;
+                              font-size: 14px;
+                              color: white;
+                              outline: none;
+                          }
+
+                          #message-input:focus {
+                              border-color: var(--v2-user-bubble);
+                          }
+
+                          button {
+                              height: 42px;
+                              padding: 0 25px;
+                              background-color: var(--v2-user-bubble);
+                              color: white;
+                              border: none;
+                              border-radius: 25px;
+                              font-weight: 600;
+                              cursor: pointer;
+                          }
+
+                          .message {
+                              padding: 12px 18px;
+                              border-radius: 18px;
+                              max-width: 80%;
+                              font-size: 14px;
+                              line-height: 1.5;
+                          }
+
+                          .user-message {
+                              background-color: var(--v2-user-bubble);
+                              color: white;
+                              align-self: flex-end;
+                              border-bottom-right-radius: 4px;
+                          }
+
+                          .assistant-message {
+                              background-color: var(--v2-bot-bubble);
+                              color: var(--v2-text-primary);
+                              align-self: flex-start;
+                              border-bottom-left-radius: 4px;
+                              border: 1px solid rgba(255, 255, 255, 0.05);
+                          }
+
+                          /* Optimized Dark Mode Loader */
+                      #loading {
+                          display: none; /* Controlled by your JS sendMessage function */
+                          position: absolute;
+                          /* Position it exactly at the bottom of the chat area */
+                          bottom: 170px; /* Adjust this value to sit right above your input box */
+                          left: 50%;
+                          transform: translateX(-50%);
+                          width: auto;
+                          background: rgba(30, 41, 59, 0.95); /* Deep slate to match Leap Stacks v2 */
+                          color: #94a3b8;
+                          padding: 6px 20px;
+                          border-radius: 20px;
+                          font-size: 12px;
+                          font-style: italic;
+                          border: 1px solid rgba(255, 255, 255, 0.1);
+                          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+                          z-index: 30; /* Higher than bubbles, lower than header */
+                          pointer-events: none; /* User can click through it if needed */
+                      }
+
+                      /* Optional: Subtle pulse animation for the 'AI is thinking' vibe */
+                      #loading {
+                          animation: loaderPulse 1.5s infinite ease-in-out;
+                      }
+
+                      @keyframes loaderPulse {
+                          0% { opacity: 0.7; }
+                          50% { opacity: 1; }
+                          100% { opacity: 0.7; }
+                      }
+                      </style>
+                      </head>
+                      <body>
+                          <h1>AgentCore Chat</h1>
+                          <div id="chat-container"></div>
+                          <div id="loading">Agent is processing...</div>
+                          <div id="input-container">
+                              <input type="text" id="message-input" placeholder="Type your message...">
+                              <button onclick="sendMessage()">Send</button>
+                          </div>
+                          <script>
+                              const apiUrl = 'API_ENDPOINT_PLACEHOLDER';
+                              const messageInput = document.getElementById('message-input');
+                              const chatContainer = document.getElementById('chat-container');
+                              const loadingIndicator = document.getElementById('loading');
+                              
+                              messageInput.addEventListener('keypress', function(e) {
+                                  if (e.key === 'Enter') {
+                                      sendMessage();
+                                  }
+                              });
+                              
+                              async function sendMessage() {
+                                  const message = messageInput.value.trim();
+                                  if (!message) return;
+                                  
+                                  messageInput.value = '';
+                                  appendMessageToChat(message, 'user');
+                                  loadingIndicator.style.display = 'block';
+                                  
+                                  try {
+                                      const response = await fetch(apiUrl, {
+                                          method: 'POST',
+                                          headers: {
+                                              'Content-Type': 'application/json'
+                                          },
+                                          body: JSON.stringify({ 
+                                              prompt: message,
+                                              sessionId: 'web-session-' + Date.now()
+                                          })
+                                      });
+                                      
+                                      const data = await response.json();
+                                      loadingIndicator.style.display = 'none';
+                                      
+                                      // Extract response text from AgentCore response
+                                      let responseText = '';
+                                      if (data.response) {
+                                          responseText = data.response;
+                                      } else if (data.output && data.output.text) {
+                                          responseText = data.output.text;
+                                      } else {
+                                          responseText = JSON.stringify(data);
+                                      }
+                                      
+                                      appendMessageToChat(responseText, 'assistant');
+                                  } catch (error) {
+                                      console.error('Error:', error);
+                                      loadingIndicator.style.display = 'none';
+                                      appendMessageToChat('Error: Failed to get response', 'assistant');
+                                  }
+                              }
+                              
+                              function appendMessageToChat(messageText, senderType) {
+                                  const messageElement = document.createElement('div');
+                                  messageElement.className = 'message ' + senderType + '-message';
+                                  messageElement.textContent = messageText;
+                                  chatContainer.appendChild(messageElement);
+                                  chatContainer.scrollTop = chatContainer.scrollHeight;
+                              }
+                          </script>
+                      </body>
+                      </html>
+                      """
+                      
+                      html_content = html_content.replace('API_ENDPOINT_PLACEHOLDER', api_endpoint)
+
+                      s3.put_object(
+                          Bucket=bucket_name,
+                          Key='index.html',
+                          Body=html_content,
+                          ContentType='text/html'
+                      )
+                      
+                      presigned_url = s3.generate_presigned_url(
+                          'get_object',
+                          Params={
+                              'Bucket': bucket_name,
+                              'Key': 'index.html'
+                          },
+                          ExpiresIn=604800
+                      )
+                      
+                      responseData = {
+                          'SignedURL': presigned_url
+                      }
+                      
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+                  except Exception as e:
+                      print(f"Error: {str(e)}")
+                      cfnresponse.send(event, context, cfnresponse.FAILED, {})
+              else:
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+      Runtime: python3.9
+      Timeout: 30
+
+  AgentCoreProxyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AgentCoreInvokePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:InvokeAgentRuntime
+                  # or bedrock-agent-runtime:InvokeAgentRuntime if you're on that API
+                Resource: '*'   # you can later restrict to AgentCoreRuntime.AgentRuntimeArn
+
+  AgentCoreProxyFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AgentName}-agentcore-proxy'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt AgentCoreProxyRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          AGENT_RUNTIME_ARN: !GetAtt AgentCoreRuntime.AgentRuntimeArn
+          REGION: !Ref AWS::Region
+      Code:
+        ZipFile: |
+          import boto3, json, os, time
+          import uuid
+
+          client = boto3.client('bedrock-agentcore', region_name=os.environ['REGION'])
+          # if you're using the older naming, use 'bedrock-agent-runtime'
+
+          def _resp(code, body):
+              return {
+                  'statusCode': code,
+                  'headers': {
+                      'Content-Type': 'application/json',
+                      'Access-Control-Allow-Origin': '*',
+                      'Access-Control-Allow-Headers': 'Content-Type',
+                      'Access-Control-Allow-Methods': 'POST,OPTIONS'
+                  },
+                  'body': json.dumps(body)
+              }
+
+          def handler(event, context):
+              if event.get('httpMethod') == 'OPTIONS':
+                  return _resp(200, {})
+
+              try:
+                  body = json.loads(event.get('body') or '{}')
+              except Exception:
+                  body = {}
+
+              prompt = body.get('prompt', 'Hello! How can I help you today?')
+              raw_session = body.get('sessionId') or f"web-session-{int(time.time())}"
+
+              if len(raw_session) < 33:
+                  raw_session = raw_session + "-" + uuid.uuid4().hex
+
+              session_id = raw_session[:128]  # hard cap 
+
+              payload = json.dumps({"prompt": prompt}).encode()
+
+              resp = client.invoke_agent_runtime(
+                  agentRuntimeArn=os.environ['AGENT_RUNTIME_ARN'],
+                  runtimeSessionId=session_id,
+                  payload=payload,
+              )
+
+              # Handle both streaming/non-streaming JSON
+              if resp.get("contentType") == "application/json":
+                  chunks = [c.decode("utf-8") for c in resp.get("response", [])]
+                  data = json.loads("".join(chunks)) if chunks else {}
+              else:
+                  data = {"raw": "Non-JSON response from AgentCore Runtime"}
+
+              return _resp(200, data)
+
+  AgentCoreAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${AWS::StackName}-agentcore-api'
+      EndpointConfiguration:
+        Types: [REGIONAL]
+
+  AgentCoreInvokeResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref AgentCoreAPI
+      ParentId: !GetAtt AgentCoreAPI.RootResourceId
+      PathPart: invoke
+
+  AgentCoreInvokePostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref AgentCoreAPI
+      ResourceId: !Ref AgentCoreInvokeResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AgentCoreProxyFunction.Arn}/invocations'
+
+
+
+  AgentCoreInvokeOptions:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref AgentCoreAPI
+      ResourceId: !Ref AgentCoreInvokeResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  AgentCoreAPIDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - AgentCoreInvokePostMethod
+      - AgentCoreInvokeOptions
+    Properties:
+      RestApiId: !Ref AgentCoreAPI
+      StageName: prod
+
+  AgentCoreProxyInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref AgentCoreProxyFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${AgentCoreAPI}/*'
+
+
+  UploadChatFrontendHTML:
+    Type: Custom::S3Upload
+    DependsOn: 
+      - FrontendChatBucket
+      - AgentCoreAPI
+    Properties:
+      ServiceToken: !GetAtt FrontendChatUploaderFunction.Arn
+      BucketName: !Ref FrontendChatBucket
+      ApiEndpoint: !Sub https://${AgentCoreAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/invoke
+
+Outputs:
+
+  FrontendURL:
+    Description: URL for the AgentCore Chat Frontend
+    Value: !GetAtt UploadChatFrontendHTML.SignedURL
+
+  EditorApiInvokeUrl:
+    Description: Base invoke URL for the editor API
+    Value: !Sub 'https://${EditorAPI}.execute-api.${AWS::Region}.amazonaws.com/prod'
+
+  EditorURL:
+    Description: Pre-signed URL to open the editor page
+    Value: !GetAtt UploadFrontend.EditorURL
+
+  AutoUpdateEnabled:
+    Description: 'Auto-update mechanism status'
+    Value: 'ENABLED - Runtime updates automatically via EventBridge when new images are pushed'
+
+  RuntimeStateTableName:
+    Description: DynamoDB table tracking runtime state
+    Value: !Ref RuntimeStateTable
+
+  UpdaterFunctionName:
+    Description: Lambda function that updates runtime
+    Value: !Ref RuntimeUpdaterFunction
+
+  EventBridgeRuleName:
+    Description: EventBridge rule monitoring ECR
+    Value: !Ref ECRImagePushRule
+
+  AgentRuntimeArn:
+    Description: ARN of the AgentCore Runtime
+    Value: !GetAtt AgentCoreRuntime.AgentRuntimeArn
+    Export:
+      Name: !Sub '${AWS::StackName}-RuntimeArn'
+    
+  AgentRuntimeId:
+    Description: ID of the AgentCore Runtime
+    Value: !GetAtt AgentCoreRuntime.AgentRuntimeId
+    Export:
+      Name: !Sub '${AWS::StackName}-RuntimeId'
+  
+  AgentRuntimeVersion:
+    Description: Version of the AgentCore Runtime
+    Value: !GetAtt AgentCoreRuntime.AgentRuntimeVersion
+    
+    
+  ECRRepositoryUri:
+    Description: URI of the ECR repository
+    Value: !GetAtt AgentECRRepository.RepositoryUri
+    
+  ContainerImageUri:
+    Description: Full container image URI
+    Value: !GetAtt TriggerBuild.ImageUri
+    
+  ExecutionRoleArn:
+    Description: ARN of the execution role
+    Value: !GetAtt AgentCoreExecutionRole.Arn
+    
+  CodeBuildProjectName:
+    Description: Name of the CodeBuild project
+    Value: !Ref AgentBuildProject
+    
+  InvokeCommandCLI:
+    Description: AWS CLI command to invoke the agent
+    Value: !Sub |
+      aws bedrock-agent-runtime invoke-agent-runtime \
+        --agent-runtime-id ${AgentCoreRuntime.AgentRuntimeId} \
+        --payload '{"prompt": "Hello, how are you?"}' \
+        --region ${AWS::Region} \
+        response.json && cat response.json
+  
+  InvokeCommandPython:
+    Description: Python code to invoke the agent
+    Value: !Sub |
+      import boto3, json
+      client = boto3.client('bedrock-agent-runtime', region_name='${AWS::Region}')
+      response = client.invoke_agent_runtime(
+          agentRuntimeId='${AgentCoreRuntime.AgentRuntimeId}',
+          payload=json.dumps({"prompt": "What is Amazon Bedrock?"})
+      )
+      print(json.loads(response['body'].read()))

@@ -1,0 +1,56 @@
+{
+    "title": "Deploy from GitHub",
+    "description": "Deploy web apps directly from GitHub to AWS Amplify with auto-updates.",
+    "fulldescription": "This prototype connects your GitHub repository to AWS Amplify to automatically build and deploy your web application. It sets up a continuous deployment pipeline, so changes pushed to your code are instantly reflected on your live site. It uses AWS Lambda to trigger the initial deployment and manages the build configuration for modern web frameworks like React or Vue. This is perfect for hosting projects exported from AI coding tools or standard web repositories.",
+    "icon": "leapai_web.png",
+    "videoUrl": "proto.mp4",
+    "services": [
+        {
+            "name": "AWS Amplify",
+            "desc": "Hosts the web application and manages the build pipeline."
+        },
+        {
+            "name": "Lambda",
+            "desc": "Triggers the initial build and handles custom deployment logic."
+        },
+        {
+            "name": "AWS Identity and Access Management (IAM)",
+            "desc": "Securely manages permissions for the build services."
+        }
+    ],
+    "estimatedCost": "Free Tier Eligible",
+    "estimatedTimeString": "Setup time: 3-5 minutes",
+    "estimatedSetupTime": 300,
+    "requiredModels": [],
+    "requiredVariables": [
+        {
+            "id": "LEAP_GITHUB_REPO",
+            "title": "GitHub Repository URL",
+            "guide": "https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository"
+        },
+        {
+            "id": "LEAP_GITHUB_TOKEN",
+            "title": "GitHub Personal Access Token",
+            "guide": "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens"
+        }
+    ],
+    "custom_outputs": [
+        {
+            "id": "FrontendURL",
+            "title": "Open Live App"
+        },
+        {
+            "id": "BackendURL",
+            "title": "Manage in Amplify Console"
+        }
+    ],
+    "costDetailsHTML": "<div style=\"max-width:700px;margin:20px auto;background:linear-gradient(135deg,#232f3e 0%,#37475a 100%);border-radius:15px;padding:25px;color:white;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.2)\"><div style=\"text-align:center;margin-bottom:20px\"><h3 style=\"margin:0 0 10px 0;font-size:1.8rem;font-weight:700\">Amplify Web Hosting</h3><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px\"><div style=\"font-size:2.2rem;font-weight:900;margin:0\">Free Tier Eligible</div><div style=\"font-size:1.1rem;opacity:0.9\">Pay-as-you-go after limits</div></div></div><div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:15px\"><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #FF9900\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">\ud83d\ude80 Build Minutes</div><div style=\"font-size:1.2rem;font-weight:700\">$0.01/min</div><div style=\"font-size:0.8rem;opacity:0.9\">Free Tier includes 1,000 build minutes per month.</div></div><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #3b82f6\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">\ud83c\udf10 Data Transfer</div><div style=\"font-size:1.2rem;font-weight:700\">$0.15/GB</div><div style=\"font-size:0.8rem;opacity:0.9\">Free Tier includes 15GB served and 5GB storage per month.</div></div><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #22c55e\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">\u03bb AWS Lambda</div><div style=\"font-size:1.2rem;font-weight:700\">Negligible</div><div style=\"font-size:0.8rem;opacity:0.9\">Used only once during the initial setup to trigger the build.</div></div></div><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px;margin-top:20px\"><div style=\"font-weight:600;margin-bottom:10px;font-size:1rem\">\ud83d\udca1 Cost Saving Tips</div><div style=\"display:grid;grid-template-columns:1fr;gap:10px;font-size:0.85rem\"><div>\u2022 <strong>Builds:</strong> You are only charged when you push code updates to GitHub.</div><div>\u2022 <strong>Hosting:</strong> Static sites are very cheap to host. Costs primarily scale with the number of visitors (traffic).</div></div></div></div>",
+    "templates": [
+        {
+            "name": "template.yaml",
+            "inputs": [],
+            "outputs": []
+        }
+    ],
+    "group": "AWS Foundations"
+}

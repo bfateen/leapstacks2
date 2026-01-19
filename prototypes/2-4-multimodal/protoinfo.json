@@ -1,0 +1,58 @@
+{
+    "title": "Website Chat (Multimodal)",
+    "description": "A multi-modal agent that can view websites, answer questions, and monitor for changes.",
+    "fulldescription": "This prototype launches a multi-modal AI agent capable of 'seeing' and interacting with live websites. It uses a specialized **AWS Lambda** function running **Playwright** (a browser automation tool) to navigate to URLs and capture high-resolution screenshots. These images are processed by **Amazon Bedrock** multimodal models (like Nova or Claude), allowing you to ask questions based on the visual layout and content of the page. It also includes a 'Monitor' feature that periodically checks a website for specific visual changes and sends email alerts via **Amazon SNS**, using **Amazon DynamoDB** to track state.",
+    "icon": "leapai_web.png",
+    "videoUrl": "proto.mp4",
+    "services": [
+        {
+            "name": "AWS Lambda",
+            "desc": "Runs the Playwright browser for screenshots and the chat logic."
+        },
+        {
+            "name": "Amazon Bedrock",
+            "desc": "Uses multimodal models to analyze the screenshots and answer queries."
+        },
+        {
+            "name": "Amazon API Gateway",
+            "desc": "Exposes endpoints for the chat interface and the monitoring service."
+        },
+        {
+            "name": "Amazon DynamoDB",
+            "desc": "Stores chat logs and the status of active website monitors."
+        },
+        {
+            "name": "S3",
+            "desc": "Stores the captured screenshots and the frontend application."
+        },
+        {
+            "name": "Amazon SNS",
+            "desc": "Sends email notifications when a monitored website changes."
+        }
+    ],
+    "estimatedCost": "Free Tier Eligible / Usage-based",
+    "estimatedTimeString": "Setup time: 6-8 minutes",
+    "estimatedSetupTime": 480,
+    "requiredModels": [
+        "amazon.nova-pro-v1:0"
+    ],
+    "custom_outputs": [
+        {
+            "id": "FrontendURL",
+            "title": "Open Interface"
+        },
+        {
+            "id": "BucketName",
+            "title": "View Screenshots"
+        }
+    ],
+    "costDetailsHTML": "<div style=\"max-width:700px;margin:20px auto;background:linear-gradient(135deg,#232f3e 0%,#37475a 100%);border-radius:15px;padding:25px;color:white;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.2)\"><div style=\"text-align:center;margin-bottom:20px\"><h3 style=\"margin:0 0 10px 0;font-size:1.8rem;font-weight:700\">Visual Web Agent</h3><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px\"><div style=\"font-size:2.2rem;font-weight:900;margin:0\">Usage Based</div><div style=\"font-size:1.1rem;opacity:0.9\">Depends on screenshot frequency</div></div></div><div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:15px\"><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #FF9900\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">\ud83c\udfad Playwright Lambda</div><div style=\"font-size:1.2rem;font-weight:700\">2GB RAM</div><div style=\"font-size:0.8rem;opacity:0.9\">Uses more memory than standard functions. Free Tier covers ~55 hours of runtime/month.</div></div><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #22c55e\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">\ud83e\udde0 Bedrock Vision</div><div style=\"font-size:1.2rem;font-weight:700\">Per Image</div><div style=\"font-size:0.8rem;opacity:0.9\">Processing images consumes more tokens than text. Costs vary by model (Nova/Claude).</div></div><div style=\"background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;border-left:4px solid #3b82f6\"><div style=\"font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px\">\ud83d\udd14 Amazon SNS</div><div style=\"font-size:1.2rem;font-weight:700\">Free Tier</div><div style=\"font-size:0.8rem;opacity:0.9\">1,000 email notifications per month are included in the Free Tier.</div></div></div><div style=\"background:rgba(255,255,255,0.1);padding:15px;border-radius:10px;margin-top:20px\"><div style=\"font-weight:600;margin-bottom:10px;font-size:1rem\">\ud83d\udca1 Cost Saving Tips</div><div style=\"display:grid;grid-template-columns:1fr;gap:10px;font-size:0.85rem\"><div>\u2022 <strong>Monitoring:</strong> Frequent polling (e.g., every minute) will increase Lambda and Bedrock costs. Use sparingly.</div><div>\u2022 <strong>Storage:</strong> Screenshots are stored in S3. Configure a lifecycle policy to delete old images if they pile up.</div></div></div></div>",
+    "templates": [
+        {
+            "name": "template.yaml",
+            "inputs": [],
+            "outputs": []
+        }
+    ],
+    "group": "GenAI Foundations"
+}

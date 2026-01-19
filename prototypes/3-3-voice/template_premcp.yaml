@@ -1,0 +1,350 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Amazon Nova Sonic 2 - Complete with Secure Frontend (Fixed Audio)'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'nova-sonic2'
+  InstanceType:
+    Type: String
+    Default: 't3.medium'
+    AllowedValues: ['t3.large', 't3.medium', 'm5.large']
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ec2.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithBidirectionalStream
+                Resource: 
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.nova-sonic-v1:0'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.nova-2-sonic-v1:0'
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref EC2Role]
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: 'Allow access'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT20M
+        Count: 1
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref LatestAmiId
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      MetadataOptions:
+        HttpTokens: required
+        HttpPutResponseHopLimit: 2
+      NetworkInterfaces:
+        - GroupSet: [!Ref SecurityGroup]
+          AssociatePublicIpAddress: true
+          DeviceIndex: '0'
+          SubnetId: !Ref PublicSubnet
+      Tags: [{Key: Name, Value: !Sub '${ProjectName}-server'}]
+      UserData:
+        Fn::Base64:
+          Fn::Sub: |
+            #!/bin/bash
+            set -ex
+            yum update -y&&yum install -y docker git
+            systemctl start docker&&systemctl enable docker
+            mkdir -p /h/app&&cd /h/app
+            cat>s.py<<'Z'
+            import asyncio,json,base64,os,uuid,boto3
+            from fastapi import FastAPI,WebSocket
+            from fastapi.middleware.cors import CORSMiddleware
+            from aws_sdk_bedrock_runtime.client import BedrockRuntimeClient
+            from aws_sdk_bedrock_runtime.models import InvokeModelWithBidirectionalStreamOperationInput,InvokeModelWithBidirectionalStreamInputChunk,BidirectionalInputPayloadPart
+            from aws_sdk_bedrock_runtime.config import Config
+            try:from smithy_aws_core.credentials_resolvers.environment import EnvironmentCredentialsResolver
+            except:from smithy_aws_core.identity.environment import EnvironmentCredentialsResolver
+            s=boto3.Session();c=s.get_credentials().get_frozen_credentials();os.environ["AWS_ACCESS_KEY_ID"]=c.access_key;os.environ["AWS_SECRET_ACCESS_KEY"]=c.secret_key
+            if c.token:os.environ["AWS_SESSION_TOKEN"]=c.token
+            a=FastAPI();a.add_middleware(CORSMiddleware,allow_origins=["*"],allow_methods=["*"],allow_headers=["*"])
+            M=os.environ.get("MODEL_ID","amazon.nova-2-sonic-v1:0");R=os.environ.get("AWS_REGION","us-east-1")
+            g=Config(endpoint_uri=f"https://bedrock-runtime.{R}.amazonaws.com",region=R,aws_credentials_identity_resolver=EnvironmentCredentialsResolver());l=BedrockRuntimeClient(config=g)
+            @a.websocket("/ws")
+            async def w(ws:WebSocket):
+             await ws.accept();i=str(uuid.uuid4())[:8];r=None;p=f"p-{i}";n=f"s-{i}";u=f"a-{i}";t=0;v=False
+             async def b():
+              nonlocal v
+              try:
+               o=await r.await_output();_,m=o;v=True
+               async for e in m:
+                if hasattr(e,'value')and e.value and e.value.bytes_:
+                 d=e.value.bytes_.decode('utf-8')
+                 try:
+                  j=json.loads(d)
+                  if'event'in j:
+                   k=j['event'];z=list(k.keys())[0]if k else'unknown'
+                   if'audioOutput'in k:
+                    q=k['audioOutput'].get('content','')
+                    if q:await ws.send_json({"type":"audio","payload":q})
+                   elif'contentEnd'in k:await ws.send_json({"type":"status","message":"Ready"})
+                 except:pass
+              except Exception as x:v=False;y=str(x)
+              if"timed out"in y.lower():await ws.send_json({"type":"error","message":"Timeout"})
+             async def h():
+              nonlocal r
+              r=await asyncio.wait_for(l.invoke_model_with_bidirectional_stream(InvokeModelWithBidirectionalStreamOperationInput(model_id=M)),timeout=12.0)
+              await r.input_stream.send(InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=json.dumps({"event":{"sessionStart":{"inferenceConfiguration":{"maxTokens":1024,"topP":0.9,"temperature":0.7}}}}).encode('utf-8'))))
+              await r.input_stream.send(InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=json.dumps({"event":{"promptStart":{"promptName":p,"textOutputConfiguration":{"mediaType":"text/plain"},"audioOutputConfiguration":{"mediaType":"audio/lpcm","sampleRateHertz":24000,"sampleSizeBits":16,"channelCount":1,"voiceId":"matthew","encoding":"base64","audioType":"SPEECH"}}}}).encode('utf-8'))))
+              await r.input_stream.send(InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=json.dumps({"event":{"contentStart":{"promptName":p,"contentName":n,"type":"TEXT","interactive":False,"role":"SYSTEM","textInputConfiguration":{"mediaType":"text/plain"}}}}).encode('utf-8'))))
+              await r.input_stream.send(InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=json.dumps({"event":{"textInput":{"promptName":p,"contentName":n,"content":"You are a helpful voice assistant."}}}).encode('utf-8'))))
+              await r.input_stream.send(InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=json.dumps({"event":{"contentEnd":{"promptName":p,"contentName":n}}}).encode('utf-8'))))
+              await r.input_stream.send(InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=json.dumps({"event":{"contentStart":{"promptName":p,"contentName":u,"type":"AUDIO","interactive":True,"role":"USER","audioInputConfiguration":{"mediaType":"audio/lpcm","sampleRateHertz":16000,"sampleSizeBits":16,"channelCount":1,"audioType":"SPEECH","encoding":"base64"}}}}).encode('utf-8'))))
+              asyncio.create_task(b())
+             try:
+              while True:
+               f=await ws.receive_text();m=json.loads(f)
+               if m.get('type')=='audio':
+                if not v and r:await ws.send_json({"type":"error","message":"Expired"});continue
+                k=m.get('payload');t+=1
+                if r is None:await h()
+                try:
+                 B=base64.b64decode(k);C=1024
+                 for E in range(0,len(B),C):F=B[E:E+C];G=base64.b64encode(F).decode('utf-8');await r.input_stream.send(InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=json.dumps({"event":{"audioInput":{"promptName":p,"contentName":u,"content":G}}}).encode('utf-8'))));await asyncio.sleep(0.01)
+                 H=b'\x00'*(int(16000*0.5)*2);I=base64.b64encode(H).decode('utf-8');await r.input_stream.send(InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=json.dumps({"event":{"audioInput":{"promptName":p,"contentName":u,"content":I}}}).encode('utf-8'))))
+                except:v=False;await ws.send_json({"type":"error","message":"Error"})
+             except:pass
+             finally:
+              v=False
+              if r and hasattr(r,'input_stream'):
+               try:await r.input_stream.send(InvokeModelWithBidirectionalStreamInputChunk(value=BidirectionalInputPayloadPart(bytes_=json.dumps({"event":{"contentEnd":{"promptName":p,"contentName":u}}}).encode('utf-8'))));await r.input_stream.end()
+               except:pass
+            @a.get("/health")
+            async def q():return{"status":"ok"}
+            if __name__=="__main__":import uvicorn;uvicorn.run(a,host="0.0.0.0",port=8000)
+            Z
+            cat>r.txt<<'Z'
+            fastapi==0.115.5
+            uvicorn[standard]==0.32.1
+            websockets==14.1
+            boto3>=1.35.72
+            aws-sdk-bedrock-runtime>=0.1.2
+            mcp>=1.0.0
+            httpx>=0.27.0
+            Z
+            cat>Dockerfile<<'Z'
+            FROM python:3.12-slim
+            WORKDIR /app
+            RUN apt-get update&&apt-get install -y git cmake build-essential libssl-dev&&rm -rf /var/lib/apt/lists/*
+            COPY r.txt requirements.txt
+            RUN pip install --no-cache-dir -r requirements.txt
+            COPY s.py .
+            CMD ["python","s.py"]
+            Z
+            docker build -t ns .&&docker run -d --name nova-sonic-app -p 8000:8000 -e AWS_REGION=${AWS::Region} -e MODEL_ID=amazon.nova-2-sonic-v1:0 --restart always ns
+            sleep 15&&docker ps|grep -q nova-sonic-app&&/opt/aws/bin/cfn-signal -e 0 --stack ${AWS::StackName} --resource EC2Instance --region ${AWS::Region}||exit 1
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Origins:
+          - Id: 'EC2Origin'
+            DomainName: !GetAtt EC2Instance.PublicDnsName
+            CustomOriginConfig:
+              HTTPPort: 8000
+              OriginProtocolPolicy: 'http-only'
+        DefaultCacheBehavior:
+          TargetOriginId: 'EC2Origin'
+          ViewerProtocolPolicy: 'redirect-to-https'
+          AllowedMethods: ['GET','HEAD','OPTIONS','PUT','POST','PATCH','DELETE']
+          CachedMethods: ['GET','HEAD','OPTIONS']
+          CachePolicyId: '4135ea2d-6df8-44a3-9df3-4b5a84be39ad'
+          OriginRequestPolicyId: '216adef6-5c7f-47e4-b989-5492eafa07d3'
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+  PrivateFrontendBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  FrontendUploaderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub '${PrivateFrontendBucket.Arn}/*'
+
+  FrontendUploaderFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt FrontendUploaderRole.Arn
+      Runtime: python3.9
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          def handler(event, context):
+            if event['RequestType'] in ['Create', 'Update']:
+              try:
+                s3 = boto3.client('s3')
+                bucket = event['ResourceProperties']['BucketName']
+                ws_url = event['ResourceProperties']['WebSocketURL']
+                html = '''<!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="UTF-8">
+              <title>Nova Sonic 2</title>
+              <script src="https://cdn.tailwindcss.com"></script>
+          </head>
+          <body class="bg-slate-900 text-white min-h-screen flex items-center justify-center">
+              <div class="p-8 bg-slate-800 rounded-xl shadow-2xl text-center w-96">
+                  <h1 class="text-2xl font-bold mb-4 text-emerald-400">Nova Sonic 2</h1>
+                  <div id="status" class="mb-6 text-sm text-slate-400">Disconnected</div>
+                  <button id="micBtn"
+                      class="w-24 h-24 rounded-full bg-slate-600 hover:bg-slate-500 transition-all shadow-lg flex items-center justify-center mx-auto mb-4 disabled:opacity-50">🎤</button>
+                  <p class="text-xs text-slate-500">Hold to Speak / Release to Send</p>
+                  <div id="debug" class="mt-4 text-xs text-slate-600 max-h-40 overflow-y-auto text-left"></div>
+              </div>
+              <script>
+                  const WS_URL = "WS_URL_PLACEHOLDER"; let ws, audioContext, mediaStream, processor, audioInput, isRecording = false, audioChunks = [], audioQueue = [], isPlaying = false; const btn = document.getElementById("micBtn"), status = document.getElementById("status"), debug = document.getElementById("debug"); function log(e) { console.log(e), debug.innerHTML += `<div>${new Date().toLocaleTimeString()}: ${e}</div>`, debug.scrollTop = debug.scrollHeight } function connect() { ws = new WebSocket(WS_URL), ws.onopen = () => { status.textContent = "Connected (Ready)", status.className = "mb-6 text-sm text-emerald-400", log("WebSocket connected") }, ws.onmessage = async e => { try { const t = JSON.parse(e.data); log(`Received: ${t.type}`), "audio" === t.type ? (audioQueue.push(t.payload), isPlaying || playAudioQueue()) : "status" === t.type && "Ready" === t.message && (status.textContent = "Connected (Ready)", status.className = "mb-6 text-sm text-emerald-400") } catch (e) { log(`Error: ${e.message}`) } }, ws.onerror = e => { log(`WebSocket error`) }, ws.onclose = () => { status.textContent = "Disconnected (Retrying...)", status.className = "mb-6 text-sm text-red-400", log("WebSocket disconnected, retrying..."), setTimeout(connect, 3e3) } } async function playAudioQueue() { if (isPlaying || 0 === audioQueue.length) return; isPlaying = true, status.textContent = "Playing Audio..."; try { const e = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 }); let t = ""; for (; audioQueue.length > 0;)t += audioQueue.shift(); const a = atob(t), o = new ArrayBuffer(a.length), s = new Uint8Array(o); for (let e = 0; e < a.length; e++)s[e] = a.charCodeAt(e); const n = e.createBuffer(1, o.byteLength / 2, 24000), i = n.getChannelData(0), d = new Int16Array(o); for (let e = 0; e < d.length; e++)i[e] = d[e] / 32768; const c = e.createBufferSource(); c.buffer = n, c.connect(e.destination), c.start(), c.onended = () => { isPlaying = false, status.textContent = "Connected (Ready)", log("Audio playback finished"), audioQueue.length > 0 && playAudioQueue() } } catch (e) { log(`Playback error: ${e.message}`), isPlaying = false, status.textContent = "Connected (Ready)" } } async function initAudio() { try { mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }), log("Microphone access granted"), audioContext = new (window.AudioContext || window.webkitAudioContext)(); const e = audioContext.sampleRate; log(`AudioContext sample rate: ${e}Hz`), audioInput = audioContext.createMediaStreamSource(mediaStream), processor = audioContext.createScriptProcessor(4096, 1, 1); const t = 16000; processor.onaudioprocess = a => { if (!isRecording) return; const o = a.inputBuffer.getChannelData(0); let s; if (e !== t) { const a = Math.round(o.length * t / e); s = new Float32Array(a); for (let n = 0; n < a; n++) { const a = n * e / t, i = Math.floor(a), d = a - i, c = o[i], r = o[Math.min(i + 1, o.length - 1)]; s[n] = c + (r - c) * d } } else s = o; const n = new Int16Array(s.length); for (let e = 0; e < s.length; e++) { const t = Math.max(-1, Math.min(1, s[e])); n[e] = t < 0 ? 32768 * t : 32767 * t } audioChunks.push(n) }, audioInput.connect(processor), processor.connect(audioContext.destination), log("Audio processing initialized (resampling to 16kHz)"), connect() } catch (e) { log(`Audio init error: ${e.message}`), status.textContent = "Microphone Error", status.className = "mb-6 text-sm text-red-400" } } function startRecording() { ws && ws.readyState === WebSocket.OPEN ? (isRecording = true, audioChunks = [], btn.style.backgroundColor = "#ef4444", status.textContent = "Listening...", log("Recording started")) : log("WebSocket not connected") } function stopRecording() { if (!isRecording) return; if (isRecording = false, btn.style.backgroundColor = "#475569", status.textContent = "Processing...", log(`Captured ${audioChunks.length} audio chunks`), 0 === audioChunks.length) return log("No audio captured"), void (status.textContent = "Connected (Ready)"); let e = 0; audioChunks.forEach(t => { e += t.length }); const t = new Int16Array(e); let a = 0; audioChunks.forEach(e => { t.set(e, a), a += e.length }), log(`Total audio: ${e} samples (${(e / 16000).toFixed(2)}s at 16kHz)`); const o = new Uint8Array(t.buffer); let s = ""; for (let e = 0; e < o.length; e++)s += String.fromCharCode(o[e]); const n = btoa(s); log(`Sending ${n.length} bytes`), ws.send(JSON.stringify({ type: "audio", payload: n })), status.textContent = "Thinking..." } btn.onmousedown = btn.ontouchstart = e => { e.preventDefault(), startRecording() }, btn.onmouseup = btn.onmouseleave = btn.ontouchend = e => { e.preventDefault(), stopRecording() }, initAudio();
+              </script>
+          </body>
+          </html>'''
+                html = html.replace('WS_URL_PLACEHOLDER', ws_url)
+                s3.put_object(Bucket=bucket, Key='index.html', Body=html, ContentType='text/html')
+                presigned_url = s3.generate_presigned_url('get_object', Params={'Bucket': bucket, 'Key': 'index.html'}, ExpiresIn=604800)
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {'PresignedURL': presigned_url})
+              except Exception as e:
+                print(f"Error: {str(e)}")
+                cfnresponse.send(event, context, cfnresponse.FAILED, {})
+            else:
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+
+  UploadFrontend:
+    Type: Custom::S3Upload
+    DependsOn: CloudFrontDistribution
+    Properties:
+      ServiceToken: !GetAtt FrontendUploaderFunction.Arn
+      BucketName: !Ref PrivateFrontendBucket
+      WebSocketURL: !Sub 'wss://${CloudFrontDistribution.DomainName}/ws'
+
+Outputs:
+  FrontendURL:
+    Description: 'Frontend URL (valid for 7 days) - Open this in your browser'
+    Value: !GetAtt UploadFrontend.PresignedURL
+  
+  WebSocketURL:
+    Description: 'WebSocket URL for backend'
+    Value: !Sub 'wss://${CloudFrontDistribution.DomainName}/ws'
+  
+  DirectWebSocket:
+    Description: 'Direct WebSocket (bypass CloudFront for testing)'
+    Value: !Sub 'ws://${EC2Instance.PublicIp}:8000/ws'
+  
+  CloudFrontDomain:
+    Description: 'CloudFront distribution domain'
+    Value: !GetAtt CloudFrontDistribution.DomainName
+  
+  S3BucketName:
+    Description: 'Private S3 bucket name'
+    Value: !Ref PrivateFrontendBucket
