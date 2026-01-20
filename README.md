@@ -137,9 +137,9 @@ Think of it as:
 
 ## 🤝 Team
 
-Creator/developer: Basil Fateen
-Security reviewers: Erik Hanchet, Cobus Bernard
-Contributors and testers: Aaron Hunter, Du'An Lightfoot, Veliswa Boya, Julian Wood, Daniel Geske, Ricardo Sueiras, Salih Gueler, Noureldin Ehab, Ahmed Samir, Awedis Keofteian
+**Creator/developer:** Basil Fateen
+**Security reviewers:** Erik Hanchet, Cobus Bernard
+**Contributors and testers:** Aaron Hunter, Du'An Lightfoot, Veliswa Boya, Julian Wood, Daniel Geske, Ricardo Sueiras, Salih Gueler, Noureldin Ehab, Ahmed Samir, Awedis Keofteian
 
 ---
 
