@@ -84,15 +84,18 @@ LEAP Stacks 2 includes **12 pre-built prototypes**, grouped to take you from clo
 ## 🚀 Quickstart
 
 1. **Deploy the Environment**  
-   Click here to directly load the script or upload `leap-installer-setup.yaml` to the **AWS CloudFormation Console**.
+   Upload `leap-installer-setup.yaml` to the **AWS CloudFormation Console** and choose a secure username/password.
 
 2. **Access the Dashboard**  
-   Once the stack is `CREATE_COMPLETE` (~30 seconds), open the LoginURL from **Stack Outputs**.
+   Once the stack is `CREATE_COMPLETE` (~50 seconds), open the LoginURL from **Stack Outputs**.
 
-3. **Launch a Prototype**  
+3. **Login**  
+   Enter the username/password from step 1 to **Login**.
+
+4. **Launch a Prototype**  
    Pick a prototype (e.g. *Voice AI Agent*) and click **Launch**.
 
-4. **Explore & Adapt**  
+5. **Explore & Adapt**  
    Edit agent memory live, swap models mid-session, and compare behavior, cost, and latency instantly.
 
 ---
@@ -129,6 +132,14 @@ LEAP Stacks:
 
 Think of it as:
 > **A playground + a blueprint + a safety net**
+
+---
+
+## 🤝 Team
+
+Creator/developer: Basil Fateen
+Security reviewers: Erik Hanchet, Cobus Bernard
+Contributors and testers: Aaron Hunter, Du'An Lightfoot, Veliswa Boya, Julian Wood, Daniel Geske, Ricardo Sueiras, Salih Gueler, Noureldin Ehab, Ahmed Samir, Awedis Keofteian
 
 ---
 
