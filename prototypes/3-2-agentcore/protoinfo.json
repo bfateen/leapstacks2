@@ -58,5 +58,59 @@
             "outputs": []
         }
     ],
-    "group": "Advanced Agentic Workflows"
+    "group": "Advanced Agentic Workflows",
+    "developerResources": [
+        {
+            "outputKey": "AgentRuntimeId",
+            "label": "Agent Runtime ID",
+            "description": "AgentCore Runtime identifier - use to invoke the agent programmatically",
+            "type": "text"
+        },
+        {
+            "outputKey": "AgentRuntimeArn",
+            "label": "Agent Runtime ARN",
+            "description": "ARN of the AgentCore Runtime - use for IAM policies and resource references",
+            "type": "text"
+        },
+        {
+            "outputKey": "ECRRepositoryUri",
+            "label": "ECR Repository URI",
+            "description": "Container registry URI - push custom agent images here",
+            "type": "text"
+        },
+        {
+            "outputKey": "CodeBuildProjectName",
+            "label": "CodeBuild Project",
+            "description": "Build project that compiles and deploys agent code changes",
+            "type": "text",
+            "consoleUrl": "https://console.aws.amazon.com/codesuite/codebuild/projects/{{value}}"
+        },
+        {
+            "outputKey": "RuntimeStateTableName",
+            "label": "Runtime State Table",
+            "description": "DynamoDB table tracking deployment state and version history",
+            "type": "text",
+            "consoleUrl": "https://console.aws.amazon.com/dynamodbv2/home?region={{region}}#table?name={{value}}"
+        },
+        {
+            "outputKey": "EditorApiInvokeUrl",
+            "label": "Editor API Endpoint",
+            "description": "API endpoint for code editor operations - use to programmatically manage agent code",
+            "type": "url"
+        },
+        {
+            "outputKey": "AddMcpToolsGuide",
+            "label": "Add MCP Tools to Agent",
+            "description": "Guide and code for adding Model Context Protocol tools to your Strands agent",
+            "type": "code",
+            "language": "python"
+        },
+        {
+            "outputKey": "InvokeAgentCode",
+            "label": "Invoke Agent from Python",
+            "description": "Python code to invoke the AgentCore Runtime programmatically",
+            "type": "code",
+            "language": "python"
+        }
+    ]
 }

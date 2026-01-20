@@ -2988,3 +2988,142 @@ Outputs:
           payload=json.dumps({"prompt": "What is Amazon Bedrock?"})
       )
       print(json.loads(response['body'].read()))
+      
+  AddMcpToolsGuide:
+    Description: "Guide: Add MCP Tools to Your Strands Agent"
+    Value: !Sub |
+      # Guide: Adding MCP Tools to Your Strands Agent
+      # This agent uses the Strands SDK which supports MCP (Model Context Protocol) tools
+
+      # Step 1: Edit your agent code in the Code Editor
+      # Add MCP tool imports at the top of your agent.py file:
+
+      from strands import Agent
+      from strands.tools import Tool
+
+      # Step 2: Define your custom MCP tool
+      # Tools are Python functions that the agent can call
+
+      def get_weather(location: str) -> str:
+          """
+          Get current weather for a location.
+
+          Args:
+              location: City name or zip code
+
+          Returns:
+              Weather information as a string
+          """
+          # Your custom logic here
+          # Example: Call a weather API
+          import requests
+
+          api_key = "your-api-key"
+          url = "https://api.weather.com/v1/current"
+          params = {"location": location, "key": api_key}
+
+          response = requests.get(url, params=params)
+          data = response.json()
+
+          return "Temperature: " + str(data.get('temp', 'N/A')) + "F"
+
+      # Step 3: Register the tool with your agent
+      # Add this to your agent initialization code:
+
+      agent = Agent(
+          name="MyAgent",
+          model="${BedrockModelId}",
+          tools=[
+              Tool(
+                  name="get_weather",
+                  description="Get current weather for any location",
+                  function=get_weather
+              )
+          ]
+      )
+
+      # Step 4: The agent can now use this tool automatically
+      # When a user asks about weather, the agent will call your function
+
+      # Example conversation:
+      # User: "What's the weather in Seattle?"
+      # Agent: (calls get_weather("Seattle")) -> "Temperature: 65F"
+
+      # Step 5: Deploy your changes
+      # Click "Deploy" in the Code Editor to rebuild and redeploy
+      # The new tool will be available immediately after deployment
+
+  InvokeAgentCode:
+    Description: "Python Code: Invoke AgentCore Runtime"
+    Value: !Sub |
+      # Example: Invoke the AgentCore Runtime programmatically
+      import boto3
+      import json
+
+      # Configuration
+      AGENT_RUNTIME_ID = "${AgentCoreRuntime.AgentRuntimeId}"
+      REGION = "${AWS::Region}"
+
+      bedrock_agent_runtime = boto3.client('bedrock-agent-runtime', region_name=REGION)
+
+      def invoke_agent(prompt, session_id=None):
+          """
+          Invoke the AgentCore Runtime with a prompt.
+
+          Args:
+              prompt: The user's message/question
+              session_id: Optional session ID for conversation continuity
+
+          Returns:
+              Agent response text
+          """
+
+          if not session_id:
+              import uuid
+              session_id = str(uuid.uuid4())
+
+          try:
+              response = bedrock_agent_runtime.invoke_agent_runtime(
+                  agentRuntimeId=AGENT_RUNTIME_ID,
+                  sessionId=session_id,
+                  inputText=prompt
+              )
+
+              # Parse the streaming response
+              completion = ""
+              for event in response.get('completion', []):
+                  if 'chunk' in event:
+                      chunk = event['chunk']
+                      if 'bytes' in chunk:
+                          completion += chunk['bytes'].decode('utf-8')
+
+              return {
+                  'response': completion,
+                  'sessionId': session_id
+              }
+
+          except Exception as e:
+              print("Error invoking agent: " + str(e))
+              return {
+                  'response': "Error: " + str(e),
+                  'sessionId': session_id
+              }
+
+      # Example usage
+      if __name__ == "__main__":
+          # Start a conversation
+          result = invoke_agent("Hello! What can you help me with?")
+
+          print("Agent Response:")
+          print(result['response'])
+          print("Session ID: " + result['sessionId'])
+
+          # Continue the conversation with the same session
+          result2 = invoke_agent(
+              "Tell me more about your capabilities",
+              session_id=result['sessionId']
+          )
+
+          print("Follow-up Response:")
+          print(result2['response'])
+
