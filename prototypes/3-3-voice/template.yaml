@@ -425,3 +425,169 @@ Outputs:
   S3BucketName:
     Description: 'Private S3 bucket name'
     Value: !Ref PrivateFrontendBucket
+
+  EC2InstanceId:
+    Description: "EC2 Instance ID for SSH access"
+    Value: !Ref EC2Instance
+
+  SetMcpServerGuide:
+    Description: "Guide: Configure MCP Server URL"
+    Value: !Sub |
+      # Guide: Setting the MCP Server URL for Tool Integration
+      
+      The Nova Sonic agent supports Model Context Protocol (MCP) for external tool integration.
+      The MCP server URL is configured via the CloudFormation parameter during stack creation.
+      
+      ## Option 1: Set During Stack Creation (Recommended)
+      
+      When launching the stack, provide the MCP server URL as a parameter:
+      
+      aws cloudformation create-stack \
+        --stack-name my-nova-sonic-stack \
+        --template-body file://template.yaml \
+        --parameters ParameterKey=McpServerUrl,ParameterValue=https://your-mcp-server.com/mcp \
+        --capabilities CAPABILITY_IAM \
+        --region ${AWS::Region}
+      
+      ## Option 2: Update Existing Stack
+      
+      To add or change the MCP server URL for an existing stack:
+      
+      aws cloudformation update-stack \
+        --stack-name ${AWS::StackName} \
+        --use-previous-template \
+        --parameters ParameterKey=McpServerUrl,ParameterValue=https://your-mcp-server.com/mcp \
+        --capabilities CAPABILITY_IAM \
+        --region ${AWS::Region}
+      
+      Note: Updating the stack will restart the EC2 instance and Docker container.
+      
+      ## Option 3: Manual Configuration (Advanced)
+      
+      To manually set the MCP URL without redeploying:
+      
+      1. Connect to the EC2 instance via SSH (see SSH Access Guide)
+      2. Stop the running container:
+         docker stop nova-sonic-app
+      3. Remove the old container:
+         docker rm nova-sonic-app
+      4. Start with new MCP URL:
+         docker run -d --name nova-sonic-app -p 8000:8000 \
+           -e AWS_REGION=${AWS::Region} \
+           -e MODEL_ID=amazon.nova-2-sonic-v1:0 \
+           -e MCP_URL=https://your-mcp-server.com/mcp \
+           --restart always ns
+      
+      ## Verify MCP Integration
+      
+      Check the Docker logs to confirm MCP connection:
+      docker logs nova-sonic-app
+      
+      You should see: [INIT] Model: amazon.nova-2-sonic-v1:0 | Region: ${AWS::Region} | MCP: Enabled (your-url)
+
+  SshAccessGuide:
+    Description: " Guide: SSH Access & Docker Management"
+    Value: !Sub |
+      # Guide: SSH Access and Docker Container Management
+      
+      ## Step 1: Connect to EC2 Instance via SSH
+      
+      This stack uses AWS Systems Manager Session Manager for secure SSH access.
+      No SSH keys or security group rules needed!
+      
+      ### Connect via AWS Console:
+      1. Go to EC2 Console: https://console.aws.amazon.com/ec2/v2/home?region=${AWS::Region}
+      2. Find instance: ${EC2Instance}
+      3. Click "Connect" button
+      4. Choose "Session Manager" tab
+      5. Click "Connect"
+      
+      ### Connect via AWS CLI:
+      aws ssm start-session \
+        --target ${EC2Instance} \
+        --region ${AWS::Region}
+      
+      Note: Requires AWS CLI v2 and Session Manager plugin installed.
+      Install: https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html
+      
+      ## Step 2: Navigate to Application Directory
+      
+      Once connected, navigate to the app directory:
+      cd /h/app
+      
+      ## Step 3: View Current Agent Code
+      
+      View the Python agent code:
+      cat s.py
+      
+      ## Step 4: Edit Agent Code (Optional)
+      
+      Edit the agent code using vi or nano:
+      sudo vi s.py
+      
+      Or copy the file locally, edit, and upload back:
+      # On your local machine:
+      aws ssm start-session --target ${EC2Instance} --region ${AWS::Region} \
+        --document-name AWS-StartPortForwardingSession \
+        --parameters "portNumber=22,localPortNumber=2222"
+      
+      # Then use SCP via the forwarded port
+      
+      ## Step 5: Rebuild Docker Image
+      
+      After editing the code, rebuild the Docker image:
+      cd /h/app
+      sudo docker build -t ns .
+      
+      ## Step 6: Restart Docker Container
+      
+      Stop and remove the old container:
+      sudo docker stop nova-sonic-app
+      sudo docker rm nova-sonic-app
+      
+      Start the new container:
+      sudo docker run -d --name nova-sonic-app -p 8000:8000 \
+        -e AWS_REGION=${AWS::Region} \
+        -e MODEL_ID=amazon.nova-2-sonic-v1:0 \
+        -e MCP_URL=${McpServerUrl} \
+        --restart always ns
+      
+      ## Step 7: Verify Container is Running
+      
+      Check container status:
+      sudo docker ps
+      
+      View logs:
+      sudo docker logs nova-sonic-app
+      
+      Follow logs in real-time:
+      sudo docker logs -f nova-sonic-app
+      
+      ## Troubleshooting
+      
+      If the container fails to start:
+      1. Check logs: sudo docker logs nova-sonic-app
+      2. Verify port 8000 is not in use: sudo netstat -tulpn | grep 8000
+      3. Check Docker service: sudo systemctl status docker
+      4. Restart Docker: sudo systemctl restart docker
+      
+      ## Quick Commands Reference
+      
+      # View running containers
+      sudo docker ps
+      
+      # Stop container
+      sudo docker stop nova-sonic-app
+      
+      # Start container
+      sudo docker start nova-sonic-app
+      
+      # Restart container
+      sudo docker restart nova-sonic-app
+      
+      # View logs
+      sudo docker logs nova-sonic-app
+      
+      # Execute command in running container
+      sudo docker exec -it nova-sonic-app /bin/bash
+

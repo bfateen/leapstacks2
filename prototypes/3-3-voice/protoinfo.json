@@ -50,5 +50,53 @@
             "outputs": []
         }
     ],
-    "group": "Advanced Agentic Workflows"
+    "group": "Advanced Agentic Workflows",
+    "developerResources": [
+        {
+            "outputKey": "WebSocketURL",
+            "label": "WebSocket URL",
+            "description": "Secure WebSocket endpoint via CloudFront - use for production connections",
+            "type": "url"
+        },
+        {
+            "outputKey": "DirectWebSocket",
+            "label": "Direct WebSocket URL",
+            "description": "Direct EC2 WebSocket endpoint - use for testing and debugging",
+            "type": "url"
+        },
+        {
+            "outputKey": "CloudFrontDomain",
+            "label": "CloudFront Domain",
+            "description": "CloudFront distribution domain - use for HTTPS frontend access",
+            "type": "text"
+        },
+        {
+            "outputKey": "S3BucketName",
+            "label": "Frontend S3 Bucket",
+            "description": "Private S3 bucket storing the web interface",
+            "type": "text",
+            "consoleUrl": "https://s3.console.aws.amazon.com/s3/buckets/{{value}}"
+        },
+        {
+            "outputKey": "EC2InstanceId",
+            "label": "EC2 Instance ID",
+            "description": "EC2 instance running the WebSocket server - use for SSH access and debugging",
+            "type": "text",
+            "consoleUrl": "https://console.aws.amazon.com/ec2/v2/home?region={{region}}#Instances:instanceId={{value}}"
+        },
+        {
+            "outputKey": "SetMcpServerGuide",
+            "label": "Configure MCP Server URL",
+            "description": "Guide for setting the MCP server URL to enable external tool integration",
+            "type": "code",
+            "language": "bash"
+        },
+        {
+            "outputKey": "SshAccessGuide",
+            "label": "SSH Access & Docker Management",
+            "description": "Step-by-step guide to connect via SSH, edit agent code, and restart the Docker container",
+            "type": "code",
+            "language": "bash"
+        }
+    ]
 }
