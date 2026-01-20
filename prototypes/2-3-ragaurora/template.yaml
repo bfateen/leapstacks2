@@ -1473,3 +1473,144 @@ Outputs:
       3. Click 'Sync' to ingest documents into Aurora vector store
       4. Test the agent using the Frontend URL or API endpoint
       5. Monitor chat logs in DynamoDB table
+
+  QueryKnowledgeBaseCode:
+    Description: "Python Code: Query Knowledge Base Directly"
+    Value: !Sub |
+      # Example: Query the Bedrock Knowledge Base directly
+      import boto3
+      import json
+
+      # Configuration
+      KNOWLEDGE_BASE_ID = "${KnowledgeBaseWithAurora}"
+      REGION = "${AWS::Region}"
+
+      bedrock_agent_runtime = boto3.client('bedrock-agent-runtime', region_name=REGION)
+
+      def query_knowledge_base(query_text, max_results=5):
+          """
+          Query the Knowledge Base directly without using the agent.
+
+          Args:
+              query_text: The search query
+              max_results: Maximum number of results to return
+
+          Returns:
+              List of relevant document chunks with metadata
+          """
+
+          try:
+              response = bedrock_agent_runtime.retrieve(
+                  knowledgeBaseId=KNOWLEDGE_BASE_ID,
+                  retrievalQuery={'text': query_text},
+                  retrievalConfiguration={
+                      'vectorSearchConfiguration': {
+                          'numberOfResults': max_results
+                      }
+                  }
+              )
+
+              results = []
+              for item in response.get('retrievalResults', []):
+                  results.append({
+                      'content': item.get('content', {}).get('text', ''),
+                      'score': item.get('score', 0),
+                      'metadata': item.get('metadata', {})
+                  })
+
+              return results
+
+          except Exception as e:
+              print("Error querying knowledge base: " + str(e))
+              return []
+
+      # Example usage
+      if __name__ == "__main__":
+          query = "What is the main topic of the documents?"
+          results = query_knowledge_base(query)
+
+          print("Query: " + query)
+          print("Found " + str(len(results)) + " results:")
+
+          for i, result in enumerate(results, 1):
+              print("Result " + str(i) + ":")
+              print("Score: " + str(result['score']))
+              print("Content: " + result['content'][:200] + "...")
+              print("")
+
+  InvokeAgentCode:
+    Description: "Python Code: Invoke Bedrock Agent Programmatically"
+    Value: !Sub |
+      # Example: Invoke the Bedrock Agent programmatically
+      import boto3
+      import json
+      import uuid
+
+      # Configuration
+      AGENT_ID = "${AgentResource}"
+      AGENT_ALIAS_ID = "${AgentAlias.AgentAliasId}"
+      REGION = "${AWS::Region}"
+
+      bedrock_agent_runtime = boto3.client('bedrock-agent-runtime', region_name=REGION)
+
+      def invoke_agent(message, session_id=None):
+          """
+          Invoke the Bedrock Agent with a message.
+
+          Args:
+              message: The user's message/question
+              session_id: Optional session ID for conversation continuity
+
+          Returns:
+              Agent response text
+          """
+
+          if not session_id:
+              session_id = str(uuid.uuid4())
+
+          try:
+              response = bedrock_agent_runtime.invoke_agent(
+                  agentId=AGENT_ID,
+                  agentAliasId=AGENT_ALIAS_ID,
+                  sessionId=session_id,
+                  inputText=message
+              )
+
+              # Parse streaming response
+              completion = ""
+              for event in response.get('completion', []):
+                  if 'chunk' in event:
+                      chunk = event['chunk']
+                      if 'bytes' in chunk:
+                          completion += chunk['bytes'].decode('utf-8')
+
+              return {
+                  'response': completion,
+                  'sessionId': session_id
+              }
+
+          except Exception as e:
+              print("Error invoking agent: " + str(e))
+              return {
+                  'response': "Error: " + str(e),
+                  'sessionId': session_id
+              }
+
+      # Example usage
+      if __name__ == "__main__":
+          # Start a conversation
+          result = invoke_agent("What information do you have in your knowledge base?")
+
+          print("Agent Response:")
+          print(result['response'])
+          print("Session ID: " + result['sessionId'])
+
+          # Continue the conversation with the same session
+          result2 = invoke_agent(
+              "Can you provide more details?",
+              session_id=result['sessionId']
+          )
+
+          print("Follow-up Response:")
+          print(result2['response'])
+

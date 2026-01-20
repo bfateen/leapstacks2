@@ -62,5 +62,65 @@
             "outputs": []
         }
     ],
-    "group": "GenAI Foundations"
+    "group": "GenAI Foundations",
+    "developerResources": [
+        {
+            "outputKey": "NextSteps",
+            "label": "Next Steps",
+            "description": "Steps to use your Knowledge Base",
+            "type": "text"
+        },
+        {
+            "outputKey": "AuroraClusterArn",
+            "label": "Aurora Cluster ARN",
+            "description": "ARN of the Aurora PostgreSQL cluster with pgvector - use for direct database access",
+            "type": "text"
+        },
+        {
+            "outputKey": "KnowledgeBaseId",
+            "label": "Knowledge Base ID",
+            "description": "Bedrock Knowledge Base identifier - use to programmatically query or manage the KB",
+            "type": "text"
+        },
+        {
+            "outputKey": "AgentId",
+            "label": "Agent ID",
+            "description": "Bedrock Agent identifier - use to invoke the agent programmatically",
+            "type": "text"
+        },
+        {
+            "outputKey": "S3DataSourceBucket",
+            "label": "Data Source S3 Bucket",
+            "description": "S3 bucket for uploading documents - add files here to expand the knowledge base",
+            "type": "text",
+            "consoleUrl": "https://s3.console.aws.amazon.com/s3/buckets/{{value}}"
+        },
+        {
+            "outputKey": "BackendURL",
+            "label": "API Gateway Endpoint",
+            "description": "REST API endpoint for chat interactions - use to integrate with other applications",
+            "type": "url"
+        },
+        {
+            "outputKey": "DynamoDBTableName",
+            "label": "Chat Logs Table",
+            "description": "DynamoDB table storing conversation history and analytics",
+            "type": "text",
+            "consoleUrl": "https://console.aws.amazon.com/dynamodbv2/home?region={{region}}#table?name={{value}}"
+        },
+        {
+            "outputKey": "QueryKnowledgeBaseCode",
+            "label": "Query Knowledge Base Example",
+            "description": "Python code showing how to query the Knowledge Base directly",
+            "type": "code",
+            "language": "python"
+        },
+        {
+            "outputKey": "InvokeAgentCode",
+            "label": "Invoke Agent from Python",
+            "description": "Python code to invoke the Bedrock Agent programmatically",
+            "type": "code",
+            "language": "python"
+        }
+    ]
 }
