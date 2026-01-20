@@ -135,7 +135,7 @@ Think of it as:
 
 ---
 
-## 🤝 Team
+## 🤜🤛 Team
 
 **Creator/developer:** Basil Fateen
 **Security reviewers:** Erik Hanchet, Cobus Bernard
