@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'LEAP Stacks installer v2.0.2 by Basil Fateen'
+Description: 'LEAP Stacks installer v2.0.4 by Basil Fateen'
 
 Parameters:
   AdminEmail:
@@ -1943,7 +1943,8 @@ Resources:
                             const servicesHtml = (prototype.services || []).map((service, index) => {
                                 var safeDesc = (service.desc || "").replace(/"/g, '&quot;');
                                 return '<div class="service-node" data-index="' + prototypes.indexOf(prototype) + '" data-service="' +
-                                    service.name.toLowerCase().replace(/ /g, '') + '" data-desc="' + safeDesc + '">' +
+                                    service.name.toLowerCase().replace(/ /g, '') + '" data-fullservicename="' +
+                                     service.name.toLowerCase() +   '" data-desc="' + safeDesc + '">' +
                                     '<img src="' + GetServiceIcon(service.name.toLowerCase().replace(/ /g, '')) +
                                     '" alt="' + service.name + '" class="service-icon">' +
                                     '<div class="service-name">' + service.name + '</div>' +
@@ -3214,26 +3215,52 @@ Resources:
                     }
                 });
 
-                $(document).on('click', '.service-node', function() {
-                  var pindex = $(this).data('index');
-                  var service = $(this).data('service');
-                  var outputs = prototypes[pindex].outputs;
-                  var url = '';
+                 $(document).on('click', '.service-node', function() {
+                    var pindex = $(this).data('index');
+                    var service = $(this).data('fullservicename');
+                    var words = service;
 
-                  if (service === 's3' && outputs.S3BucketName) {
-                      url = "https://s3.console.aws.amazon.com/s3/buckets/" + outputs.S3BucketName;
-                  } else if (service === 'lambda' && outputs.LambdaFunctionName) {
-                      url = "https://console.aws.amazon.com/lambda/home?region=us-east-1#/functions/" + outputs.LambdaFunctionName;
-                  } else if (service === 'apigateway' && outputs.ApiEndpoint) {
-                      url = "https://console.aws.amazon.com/apigateway/home?region=us-east-1#/apis/" + outputs.ApiEndpoint;
-                  } else if (service === 'bedrock') {
-                      url = "https://us-east-1.console.aws.amazon.com/bedrock/home";
-                  }
+                    console.log('clicked words: '+words);
+                    
+                    var explainers = appinfo["explainers"];
+                        if (explainers) {
+                            explainers.forEach(function (explainer, index) {
+                                var term = explainer.term;
+                                // Escape regex chars for the primary term
+                                var escapedTerm = term.replace(/[.*+?^{}$()|[\]\\]/g, '\\$&');
+                                var regex = new RegExp('\\b' + escapedTerm + '\\b', 'gi');
+                                var found = false;
 
-                  if (url) {
-                      window.open(url, '_blank').focus();
-                  }
-              });
+                                //console.log('checking: ' + escapedTerm);
+                                // Check if primary term exists
+                                if (words.search(regex) !== -1) {
+                                    words = words.replace(regex, function (match) {
+                                        found = true;
+                                        ShowExplainer(index);
+                                        return;
+                                    });
+                                }
+
+                                // If primary term was NOT found, try the alternate term
+                                if (!found && explainer.term_alt) {
+                                    var termAlt = explainer.term_alt;
+                                    var escapedTermAlt = termAlt.replace(/[.*+?^{}$()|[\]\\]/g, '\\$&');
+                                    var regexAlt = new RegExp('\\b' + escapedTermAlt + '\\b', 'gi');
+
+                                                        //console.log('checking: ' + escapedTermAlt);
+
+
+                                    words = words.replace(regexAlt, function (match) {
+                                        ShowExplainer(index);
+                                        return;
+
+                                    });
+                                }
+                            });
+                        }
+
+                    
+                });
 
                 $(document).on('click', '.explainer-link', function(e) { e.preventDefault(); ShowExplainer($(this).data('index')); });
                 $(document).on('click', '.prototype-demo-video', function (e) { e.preventDefault(); ShowPrototypeVideo(parseInt($(this).data('index'))-1); });
