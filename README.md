@@ -138,6 +138,7 @@ Think of it as:
 ## 🤜🤛 Team
 
 **Creator/developer:** Basil Fateen
+
 **Security reviewers:** Erik Hanchet, Cobus Bernard
 **Contributors and testers:** Aaron Hunter, Du'An Lightfoot, Veliswa Boya, Julian Wood, Daniel Geske, Ricardo Sueiras, Salih Gueler, Noureldin Ehab, Ahmed Samir, Awedis Keofteian, Oluwatobi Mustapha, Saurabh Dahal
 
@@ -145,11 +146,10 @@ Think of it as:
 
 ## 🤝 Community
 
-Join the LEAP Stacks discord server for info, updates, discussions and to get help: https://discord.gg/pvjPsdms
+Join the LEAP Stacks discord server for info, updates, discussions and to get help: https://discord.gg/DXhFXDQ8
 
 We welcome contributors ❤️
 
 ## 📜 License
 
 Distributed under the **MIT License**.  
-See the `LICENSE` file for details.
