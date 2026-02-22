@@ -33,6 +33,7 @@
     "estimatedCost": "~$0.05/hr (NLB + Fargate)",
     "estimatedTimeString": "Setup time: 5-7 minutes",
     "estimatedSetupTime": 500,
+    "notAI": true,
     "requiredModels": [],
     "custom_outputs": [
         {

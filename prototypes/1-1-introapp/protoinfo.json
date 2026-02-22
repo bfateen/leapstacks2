@@ -25,6 +25,7 @@
     "estimatedCost": "Free Tier Eligible",
     "estimatedTimeString": "Setup time: 2-4 minutes",
     "estimatedSetupTime": 180,
+    "notAI": true,
     "requiredModels": [],
     "custom_outputs": [
         {
