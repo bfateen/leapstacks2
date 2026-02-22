@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'LEAP Stacks installer v2.1.0 by Basil Fateen'
+Description: 'LEAP Stacks installer v2.1.1 by Basil Fateen'
 
 Parameters:
   AdminEmail:
@@ -2238,11 +2238,19 @@ Resources:
                  // Standard deployment logic...
                  if(!customReplacements) customReplacements = [];
                  const output = document.getElementById('output');
-                 // CAUTION: Ensure the API URL is injected by CloudFormation !Sub
+                 
+                 var pindexEarly = prototypes.findIndex(p => p.id == id);
+                    if (pindexEarly >= 0) {
+                        prototypes[pindexEarly]['launching'] = true;
+                        prototypes[pindexEarly]['launchStartTime'] = Date.now();
+                        fulldata['prototypes'] = prototypes;
+                        saveToLocalStorage('myAppState', fulldata);
+                    }
+
                  const apiUrl = 'https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod/initiate'; 
                  const tkey = 'protoscripts/' + id + '/template.yaml';
                  
-                 // ... (Rest of logic same as original) ...
+                 
                  var replacements = [];
                  replacements = replacements.concat(customReplacements);
                  var mid= $(".prototype-card[data-id='" + id + "']").find('.modelsel').val();
@@ -2260,16 +2268,19 @@ Resources:
                     });
                     const initiateData = await initiateResponse.json();
                     if (initiateResponse.ok) {
-                        output.innerHTML = 'Stack creation initiated. Stack ID: ' + initiateData.stackId;
-                        $(".prototype-card[data-id='"+id+"']").attr('data-stackname',initiateData.stackName);
-                        prototypes[pindex]['stackname']=initiateData.stackName;
-                        prototypes[pindex]['costestimate']=initiateData.costEstimateUrl;
-                        prototypes[pindex]['model_id'] = mid;
-                        prototypes[pindex]['model_name'] = mname;
-                        fulldata['prototypes'] = prototypes;
-                        saveToLocalStorage('myAppState', fulldata);
-                        checkStatus(initiateData.stackName, id);
-                    } else { throw new Error(initiateData.error || 'Unknown error'); }
+                    output.innerHTML = 'Stack creation initiated. Stack ID: ' + initiateData.stackId;
+                    $(".prototype-card[data-id='"+id+"']").attr('data-stackname',initiateData.stackName);
+                    prototypes[pindex]['stackname']=initiateData.stackName;
+                    prototypes[pindex]['pendingStackName']=initiateData.stackName;  
+                    prototypes[pindex]['launching'] = true;  
+                    prototypes[pindex]['costestimate']=initiateData.costEstimateUrl;
+                    prototypes[pindex]['model_id'] = mid;
+                    prototypes[pindex]['model_name'] = mname;
+                    fulldata['prototypes'] = prototypes;
+                    saveToLocalStorage('myAppState', fulldata);
+                    checkStatus(initiateData.stackName, id);
+                } else { throw new Error(initiateData.error || 'Unknown error'); }
+
                  } catch (error) { output.innerHTML = 'Error: ' + error.message; }
             }
 
@@ -2353,7 +2364,7 @@ Resources:
                     $('#editmodels').html('<i class="fa-solid fa-cube" style="margin-right:6px"></i> ' + tote+' models enabled');
                     
                     // Update the video container directly
-                    $('#welcomevideo').html('<video style="width:100%; border-radius:8px;" controls><source src="'+ GetServiceIcon('welcomesmall3')+'" type="video/mp4"></video><div style="padding:15px; color:var(--text-secondary)"><p>Welcome to LEAP Stacks v2.</p></div>');
+                    $('#welcomevideo').html('<video style="width:100%; border-radius:8px;" controls><source src="'+ GetServiceIcon('welcomesmall3')+'" type="video/mp4"></video><div style="padding:15px; color:var(--text-secondary)"><p>Welcome to LEAP Stacks v2.1.1</p></div>');
 
                     if (!oldp) renderPrototypes();
                     if (hasaccess) saveToLocalStorage('myAppState', data);
@@ -2554,6 +2565,8 @@ Resources:
                               
                                 if (statusData.status === 'CREATE_COMPLETE' || statusData.status === 'UPDATE_COMPLETE') {
                                     // DEPLOYMENT SUCCESS
+                                    prototypes[pindex]['launching'] = false;  // ADDED
+                                    prototypes[pindex]['pendingStackName'] = null;  // ADDED
                                     prototypes[pindex]['outputs'] = statusData.outputs;
                                     if (statusData.outputs) {
                                         var outputs = statusData.outputs;
@@ -2573,6 +2586,8 @@ Resources:
                                 // 3. DELETE CHECK
                                 else if (statusData.status.includes('DELETE')) {
                                     // DELETION COMPLETE
+                                    prototypes[pindex]['launching'] = false;  // ADDED
+                                    prototypes[pindex]['pendingStackName'] = null; 
                                     PrototypeDeleted(pid, pindex);
                                     saveToLocalStorage('myAppState', fulldata);
                                 } 
@@ -2582,6 +2597,9 @@ Resources:
                                     // Reset UI to inactive so the user can try again.
                                     var errorMsg = statusData.error || ('Deployment failed with status: ' + statusData.status);
                                     console.log(errorMsg); // Log error to console
+
+                                    prototypes[pindex]['launching'] = false;  // ADDED
+                                    prototypes[pindex]['pendingStackName'] = null; 
                                     
                                     PrototypeDeleted(pid, pindex);
                                     
@@ -3177,6 +3195,39 @@ Resources:
                                 startCountdownTimer(prototype.id, savedTimer);
                             }
                         }
+                        //  Handle prototypes that were mid-launch when page was closed/refreshed
+                        else if (prototype.launching && prototype.pendingStackName) {
+                            // Resume monitoring a stack that was launching
+                            console.log('Resuming launch monitoring for:', prototype.pendingStackName);
+                            
+                            const card = $('.prototype-card[data-id="' + prototype.id + '"]');
+                            
+                            // Set the stackname attribute on the card
+                            card.attr('data-stackname', prototype.pendingStackName);
+                            
+                            // Update UI to show resuming state
+                            card.find('.card-content').hide();
+                            card.find('.status-msg').html('Resuming deployment check...');
+                            card.find('.progress-bar').show();
+                            card.find('.progress-fill').css('width', '60%');  // Show partial progress
+                            card.addClass('expanded');
+                            
+                            // Resume status checking
+                            launching = true;  // Set global flag
+                            checkStatus(prototype.pendingStackName, prototype.id);
+                        }
+                        else if (prototype.launching && !prototype.pendingStackName) {
+                            // Launch was interrupted before we got a stack name - reset state
+                            console.log('Clearing interrupted launch for prototype:', prototype.id);
+                            prototypes[pindex]['launching'] = false;
+                            prototypes[pindex]['launchStartTime'] = null;
+                            fulldata['prototypes'] = prototypes;
+                            saveToLocalStorage('myAppState', fulldata);
+                            
+                            // Show error message to user
+                            const card = $('.prototype-card[data-id="' + prototype.id + '"]');
+                            card.find('.status-msg').html('<span style="color:var(--accent-red)">Previous launch interrupted. Please try again.</span>');
+                        }
                         pindex++;
                     });
                     
@@ -3184,7 +3235,7 @@ Resources:
                     if (tote > 0) hasaccess=true;
                     $('#editmodels').html('<i class="fa-solid fa-cube" style="margin-right:6px"></i> ' + tote + ' models enabled');
                     
-                    $('#welcomevideo').html('<video style="width:100%; border-radius:8px;" controls><source src="' + GetServiceIcon('welcomesmall3') + '" type="video/mp4"></video><div style="padding:15px; color:var(--text-secondary)"><p>Welcome to LEAP Stacks v2.</p></div>');
+                    $('#welcomevideo').html('<video style="width:100%; border-radius:8px;" controls><source src="' + GetServiceIcon('welcomesmall3') + '" type="video/mp4"></video><div style="padding:15px; color:var(--text-secondary)"><p>Welcome to LEAP Stacks v2.1.1</p></div>');
 
                     hideInitialLoader();
                     if (!hasaccess) showModal("Model Access", "You need access to at least one model.", models_access);
